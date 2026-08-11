@@ -6,6 +6,7 @@ const routes = [
       { path: '', component: () => import('pages/IndexPage.vue') },
       { path: 'route/:tuyenId', component: () => import('pages/IndexPage.vue') },
       { path: 'sid/:sid', component: () => import('pages/SidRouteDiagram.vue') },
+      { path: 'map', component: () => import('pages/CableMapPage.vue') }, // NEW: GIS map page
     ],
   },
 
