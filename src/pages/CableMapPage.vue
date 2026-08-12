@@ -1,107 +1,91 @@
 <template>
-  <q-page class="gis-map-page">
-    <div class="gis-map-overlay-top row items-start q-gutter-sm">
-      <MapSearchBar
-        :model-value="gis.searchQuery.value"
-        :results="gis.searchResults.value"
-        :loading="gis.searchLoading.value"
-        :error="gis.searchError.value"
-        @search="onSearch"
-        @select="onSearchSelect"
-        @clear="gis.clearSearch"
-      />
-      <MapToolbar
-        :map-type="mapType"
-        :loading="gis.loadingMap.value"
-        :has-route="!!gis.selectedRouteId.value"
-        @update:map-type="onMapTypeChange"
-        @refresh="onRefresh"
-        @fit-route="onFitRoute"
-        @close-route="gis.clearRoute"
-      />
-    </div>
-
-    <GoogleMapView
-      ref="mapViewRef"
-      :points="gis.points.value"
-      :segments="gis.segments.value"
-      :route-segments="gis.routeSegments.value"
-      :selected-segment-id="gis.selectedSegmentId.value"
-      :editing-segment-id="gis.editingSegmentId.value"
-      :current-geometry="gis.currentGeometry.value"
-      :map-type="mapType"
-      @idle="onMapIdle"
-      @point-click="onPointClick"
-      @segment-click="onSegmentClick"
-      @background-click="gis.clearSelection"
-      @geometry-changed="onGeometryChanged"
-    />
-
-    <!-- Point type legend -->
-    <div class="gis-legend">
-      <div class="legend-title">Loại điểm</div>
-      <div v-for="(meta, key) in POINT_TYPE_META" :key="key" class="legend-row">
-        <span class="legend-dot" :style="{ background: meta.color }" />
-        <span>{{ meta.label }}</span>
-      </div>
-    </div>
-
-    <!-- Per-route color legend — each ma_tuyen currently in viewport gets its own color -->
-    <div v-if="routeLegend.length" class="gis-route-legend">
-      <div class="legend-title">Tuyến trong khung nhìn ({{ routeLegend.length }})</div>
-      <div v-for="r in routeLegend" :key="r.maTuyen" class="legend-row">
-        <span class="legend-line" :style="{ background: r.color }" />
-        <span class="legend-route-label" :title="r.maTuyen">{{ r.maTuyen }}</span>
-      </div>
-    </div>
-
-    <q-card v-if="gis.selectedPoint.value" dark class="point-info-panel">
-      <q-card-section class="row items-center q-pb-none">
-        <div class="text-subtitle2">
-          {{ gis.selectedPoint.value.ten_diem || gis.selectedPoint.value.ma_diem }}
+    <q-page class="gis-map-page">
+        <div class="gis-map-overlay-top row items-start q-gutter-sm">
+            <MapSearchBar :model-value="gis.searchQuery.value" :results="gis.searchResults.value"
+                :loading="gis.searchLoading.value" :error="gis.searchError.value" @search="onSearch"
+                @select="onSearchSelect" @clear="gis.clearSearch" />
+            <MapToolbar :map-type="mapType" :loading="gis.loadingMap.value || gis.loadingRouteMode.value"
+                :has-route="!!gis.selectedRouteId.value" :points-draggable="gis.pointsDraggable.value"
+                :route-mode="gis.routeMode.value" :route-mode-label="gis.routeModeLabel.value"
+                @update:map-type="onMapTypeChange" @refresh="onRefresh" @fit-route="onFitRoute"
+                @close-route="gis.clearRoute" @update:points-draggable="onTogglePointsDraggable"
+                @exit-route-mode="onExitRouteMode" @go-sid="onGoSid" />
         </div>
-        <q-space />
-        <q-btn dense flat round icon="close" size="sm" @click="gis.clearSelection" />
-      </q-card-section>
-      <q-card-section class="text-caption q-gutter-xs">
-        <div><b>Mã điểm:</b> {{ gis.selectedPoint.value.ma_diem }}</div>
-        <div v-if="gis.selectedPoint.value.point_type"><b>Loại:</b> {{ gis.selectedPoint.value.point_type }}</div>
-        <div><b>Tuyến:</b> {{ gis.selectedPoint.value.ma_tuyen }}</div>
-        <div><b>Toạ độ:</b> {{ gis.selectedPoint.value.lat }}, {{ gis.selectedPoint.value.lng }}</div>
-      </q-card-section>
-      <q-card-section v-if="gis.selectedPoint.value.parent_id" class="q-pt-none">
-        <q-btn dense no-caps flat color="grey-4" icon="route" label="Xem tuyến"
-          @click="onViewRoute(gis.selectedPoint.value.parent_id)" />
-      </q-card-section>
-    </q-card>
 
-    <SegmentInfoPanel
-      v-if="gis.selectedSegmentId.value"
-      :detail="gis.segmentDetail.value"
-      :loading="gis.loadingSegmentDetail.value"
-      :error="gis.segmentDetailError.value"
-      :editing="gis.editingSegmentId.value === gis.selectedSegmentId.value"
-      :is-dirty="gis.isDirty.value"
-      :saving="gis.saving.value"
-      :save-error="gis.saveError.value"
-      :conflict="gis.conflict.value"
-      @close="gis.clearSelection"
-      @start-edit="onStartEdit"
-      @save="onSaveEdit"
-      @cancel="gis.cancelEdit"
-      @fit="onFitSegment"
-      @view-route="onViewRoute"
-      @reload-conflict="onReloadConflict"
-    />
+        <GoogleMapView ref="mapViewRef" :points="activePoints" :segments="activeSegments"
+            :route-segments="gis.routeSegments.value" :selected-segment-id="gis.selectedSegmentId.value"
+            :editing-segment-id="gis.editingSegmentId.value" :current-geometry="gis.currentGeometry.value"
+            :map-type="mapType" :points-draggable="gis.pointsDraggable.value"
+            :visible-point-types="gis.visiblePointTypes" @idle="onMapIdle" @point-click="onPointClick"
+            @segment-click="onSegmentClick" @background-click="gis.clearSelection" @geometry-changed="onGeometryChanged"
+            @point-dragend="onPointDragEnd" />
 
-    <q-banner v-if="gis.mapError.value" dense class="gis-error-banner bg-negative text-white">
-      {{ gis.mapError.value }}
-    </q-banner>
-  </q-page>
+        <div class="gis-legend">
+            <div class="legend-title">Loại điểm (bấm để ẩn/hiện)</div>
+            <div v-for="(meta, key) in POINT_TYPE_META" :key="key" class="legend-row legend-row--toggle"
+                :class="{ 'legend-row--off': gis.visiblePointTypes[key] === false }"
+                @click="gis.togglePointTypeVisible(key)">
+                <q-checkbox dense :model-value="gis.visiblePointTypes[key] !== false" color="primary"
+                    @update:model-value="gis.togglePointTypeVisible(key)" @click.stop />
+                <span class="legend-dot" :style="{ background: meta.color }" />
+                <span>{{ meta.label }}</span>
+            </div>
+            <div v-if="gis.pointsDraggable.value" class="drag-hint">
+                <q-icon name="info" size="12px" /> Kéo marker để lưu vị trí mới
+            </div>
+        </div>
+
+        <div v-if="routeLegend.length" class="gis-route-legend">
+            <div class="legend-title">Tuyến trong khung nhìn ({{ routeLegend.length }})</div>
+            <div v-for="r in routeLegend" :key="r.maTuyen" class="legend-row">
+                <span class="legend-line" :style="{ background: r.color }" />
+                <span class="legend-route-label" :title="r.maTuyen">{{ r.maTuyen }}</span>
+            </div>
+        </div>
+
+        <q-card v-if="gis.selectedPoint.value" dark class="point-info-panel">
+            <q-card-section class="row items-center q-pb-none">
+                <div class="text-subtitle2">
+                    {{ gis.selectedPoint.value.ten_diem || gis.selectedPoint.value.ma_diem }}
+                </div>
+                <q-space />
+                <q-btn dense flat round icon="close" size="sm" @click="gis.clearSelection" />
+            </q-card-section>
+            <q-card-section class="text-caption q-gutter-xs">
+                <div><b>Mã điểm:</b> {{ gis.selectedPoint.value.ma_diem || gis.selectedPoint.value.source_id }}</div>
+                <div v-if="gis.selectedPoint.value.point_type"><b>Loại:</b> {{ gis.selectedPoint.value.point_type }}
+                </div>
+                <div><b>Tuyến:</b> {{ gis.selectedPoint.value.ma_tuyen }}</div>
+                <div><b>Toạ độ:</b> {{ gis.selectedPoint.value.lat }}, {{ gis.selectedPoint.value.lng }}</div>
+                <div v-if="gis.savingPointId.value === gis.selectedPoint.value.source_id" class="text-amber">
+                    <q-spinner size="12px" /> Đang lưu vị trí mới...
+                </div>
+            </q-card-section>
+            <q-card-section v-if="gis.selectedPoint.value.parent_id" class="q-pt-none">
+                <q-btn dense no-caps flat color="grey-4" icon="route" label="Xem tuyến"
+                    @click="onViewRoute(gis.selectedPoint.value.parent_id)" />
+            </q-card-section>
+        </q-card>
+
+        <SegmentInfoPanel v-if="gis.selectedSegmentId.value" :detail="gis.segmentDetail.value"
+            :loading="gis.loadingSegmentDetail.value" :error="gis.segmentDetailError.value"
+            :editing="gis.editingSegmentId.value === gis.selectedSegmentId.value" :is-dirty="gis.isDirty.value"
+            :saving="gis.saving.value" :save-error="gis.saveError.value" :conflict="gis.conflict.value"
+            @close="gis.clearSelection" @start-edit="onStartEdit" @save="onSaveEdit" @cancel="gis.cancelEdit"
+            @fit="onFitSegment" @view-route="onViewRoute" @reload-conflict="onReloadConflict" />
+
+        <q-banner v-if="gis.mapError.value" dense class="gis-error-banner bg-negative text-white">
+            {{ gis.mapError.value }}
+        </q-banner>
+        <q-banner v-if="gis.routeModeError.value" dense class="gis-error-banner bg-negative text-white">
+            {{ gis.routeModeError.value }}
+        </q-banner>
+    </q-page>
 </template>
 
 <script setup>
-import { ref, computed, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Notify } from 'quasar'
 import GoogleMapView from '../components/gis/GoogleMapView.vue'
 import MapToolbar from '../components/gis/MapToolbar.vue'
@@ -111,158 +95,303 @@ import { useGisMap } from '../composables/useGisMap'
 import { POINT_TYPE_META } from '../utils/pointTypes'
 import { getRouteColor } from '../utils/routeColors'
 
+const route = useRoute()
+const router = useRouter()
 const gis = useGisMap()
 const mapViewRef = ref(null)
 const mapType = ref('roadmap')
 let lastBounds = null
 let lastZoom = null
 
-// Distinct ma_tuyen currently loaded in the viewport, each with its stable
-// route color — lets the user read the otherwise-arbitrary-looking colors.
+const activePoints = computed(() => gis.routeMode.value ? gis.routeModePoints.value : gis.points.value)
+const activeSegments = computed(() => gis.routeMode.value ? gis.routeModeSegments.value : gis.segments.value)
+
 const routeLegend = computed(() => {
-  const seen = new Map()
-  gis.segments.value.forEach(segment => {
-    if (segment.ma_tuyen && !seen.has(segment.ma_tuyen)) {
-      seen.set(segment.ma_tuyen, getRouteColor(segment.ma_tuyen))
-    }
-  })
-  return [...seen.entries()]
-    .map(([maTuyen, color]) => ({ maTuyen, color }))
-    .sort((a, b) => a.maTuyen.localeCompare(b.maTuyen))
+    const seen = new Map()
+    activeSegments.value.forEach(segment => {
+        if (segment.ma_tuyen && !seen.has(segment.ma_tuyen)) {
+            seen.set(segment.ma_tuyen, getRouteColor(segment.ma_tuyen))
+        }
+    })
+    return [...seen.entries()]
+        .map(([maTuyen, color]) => ({ maTuyen, color }))
+        .sort((a, b) => a.maTuyen.localeCompare(b.maTuyen))
 })
 
 function onMapIdle({ bounds, zoom }) {
-  lastBounds = bounds
-  lastZoom = zoom
-  gis.scheduleViewportLoad(bounds, zoom)
+    lastBounds = bounds
+    lastZoom = zoom
+    gis.scheduleViewportLoad(bounds, zoom)
 }
 
 function onRefresh() {
-  if (lastBounds) gis.loadViewport(lastBounds, lastZoom)
+    if (gis.routeMode.value) {
+        enterRouteModeFromRoute()
+        return
+    }
+    if (lastBounds) gis.loadViewport(lastBounds, lastZoom)
 }
 
 function onMapTypeChange(type) {
-  mapType.value = type
-  mapViewRef.value?.setMapType(type)
+    mapType.value = type
+    mapViewRef.value?.setMapType(type)
+}
+
+function onTogglePointsDraggable(val) {
+    gis.setPointsDraggable(val)
+    if (val) {
+        Notify.create({ type: 'info', message: 'Chế độ chỉnh điểm bật: kéo marker để lưu vị trí mới.' })
+    }
 }
 
 function onPointClick(point) {
-  gis.selectPoint(point)
-  mapViewRef.value?.panToPoint(point)
+    gis.selectPoint(point)
+    mapViewRef.value?.panToPoint(point)
 }
 
 async function onSegmentClick(segmentId) {
-  await gis.selectSegment(segmentId)
+    await gis.selectSegment(segmentId)
+}
+
+async function onPointDragEnd({ point, lat, lng }) {
+    const result = await gis.updatePointGeometry(point, lat, lng)
+    if (result?.point) {
+        Notify.create({ type: 'positive', message: 'Đã lưu vị trí điểm mới.' })
+        if ((result.refreshed_auto_segments || []).length) {
+            Notify.create({
+                type: 'info',
+                message: `Đã tự cập nhật ${result.refreshed_auto_segments.length} đoạn cáp AUTO liên quan.`
+            })
+        }
+    } else if (gis.pointSaveError.value) {
+        Notify.create({ type: 'negative', message: gis.pointSaveError.value })
+    }
 }
 
 function onSearch(text) {
-  gis.scheduleSearch(text)
+    gis.scheduleSearch(text, 'point,route')
 }
 
 function onSearchSelect(result) {
-  if (result.lat == null || result.lng == null) {
-    Notify.create({ type: 'warning', message: 'Điểm này chưa có toạ độ trên bản đồ.' })
-    return
-  }
-  gis.selectPoint({
-    ma_diem: result.source_id,
-    ten_diem: result.label,
-    lat: result.lat,
-    lng: result.lng,
-    ma_tuyen: result.ma_tuyen,
-    point_type: result.point_type || ''
-  })
-  mapViewRef.value?.panToPoint({ lat: result.lat, lng: result.lng })
-  gis.clearSearch()
+    if (result.type === 'route') {
+        gis.clearSearch()
+        router.push(`/route/map/${encodeURIComponent(result.ma_tuyen)}`)
+        return
+    }
+    if (result.lat == null || result.lng == null) {
+        Notify.create({ type: 'warning', message: 'Điểm này chưa có toạ độ trên bản đồ.' })
+        return
+    }
+    gis.selectPoint({
+        source_id: result.source_id,
+        ma_diem: result.source_id,
+        ten_diem: result.label,
+        lat: result.lat,
+        lng: result.lng,
+        ma_tuyen: result.ma_tuyen,
+        point_type: result.point_type || ''
+    })
+    mapViewRef.value?.panToPoint({ lat: result.lat, lng: result.lng })
+    gis.clearSearch()
+}
+
+function onGoSid(sidValue) {
+    router.push(`/sid/map/${encodeURIComponent(sidValue)}`)
 }
 
 function onFitRoute() {
-  mapViewRef.value?.fitToRoute()
+    mapViewRef.value?.fitToRoute()
+}
+
+function onExitRouteMode() {
+    gis.exitRouteMode()
+    router.push('/map')
 }
 
 async function onViewRoute(routeId) {
-  if (!routeId) return
-  await gis.loadRoute(routeId)
+    if (!routeId) return
+    await gis.loadRoute(routeId)
 }
 
 function onStartEdit() {
-  const segmentId = gis.selectedSegmentId.value
-  const geometry = gis.segmentDetail.value?.segment?.geometry
-  if (!segmentId || !geometry) return
-  gis.startEdit(segmentId, geometry)
+    const segmentId = gis.selectedSegmentId.value
+    const geometry = gis.segmentDetail.value?.segment?.geometry
+    if (!segmentId || !geometry) return
+    gis.startEdit(segmentId, geometry)
 }
 
 function onGeometryChanged(path) {
-  gis.updateCurrentGeometryFromPath(path)
+    gis.updateCurrentGeometryFromPath(path)
 }
 
 async function onSaveEdit() {
-  const result = await gis.saveEdit()
-  if (result) {
-    Notify.create({ type: 'positive', message: 'Đã lưu geometry.' })
-  } else if (gis.saveError.value && !gis.conflict.value) {
-    Notify.create({ type: 'negative', message: gis.saveError.value })
-  }
+    const result = await gis.saveEdit()
+    if (result) {
+        Notify.create({ type: 'positive', message: 'Đã lưu geometry.' })
+    } else if (gis.saveError.value && !gis.conflict.value) {
+        Notify.create({ type: 'negative', message: gis.saveError.value })
+    }
 }
 
 async function onReloadConflict() {
-  const segmentId = gis.selectedSegmentId.value
-  if (!segmentId) return
-  await gis.reloadSegmentAfterConflict(segmentId)
-  gis.cancelEdit()
+    const segmentId = gis.selectedSegmentId.value
+    if (!segmentId) return
+    await gis.reloadSegmentAfterConflict(segmentId)
+    gis.cancelEdit()
 }
 
 function onFitSegment() {
-  if (gis.selectedSegmentId.value) mapViewRef.value?.fitToSegment(gis.selectedSegmentId.value)
+    if (gis.selectedSegmentId.value) mapViewRef.value?.fitToSegment(gis.selectedSegmentId.value)
 }
 
+async function enterRouteModeFromRoute() {
+    const maTuyen = route.params.maTuyen
+    if (!maTuyen) return
+    await gis.enterRouteMode({ maTuyen })
+    await nextTick()
+    mapViewRef.value?.fitToCurrentData()
+}
+
+watch(() => route.params.maTuyen, (val) => {
+    if (val) {
+        enterRouteModeFromRoute()
+    } else if (gis.routeMode.value) {
+        gis.exitRouteMode()
+    }
+}, { immediate: true })
+
 onBeforeUnmount(() => {
-  gis.dispose()
+    gis.dispose()
 })
 </script>
 
 <style scoped>
-.gis-map-page { position: relative; width: 100%; height: calc(100vh - 50px); }
+.gis-map-page {
+    position: relative;
+    width: 100%;
+    height: calc(100vh - 50px);
+}
+
 .gis-map-overlay-top {
-  position: absolute; top: 8px; left: 8px; right: 8px; z-index: 30;
-  pointer-events: none;
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    z-index: 30;
+    pointer-events: none;
 }
-.gis-map-overlay-top > * { pointer-events: auto; }
+
+.gis-map-overlay-top>* {
+    pointer-events: auto;
+}
+
 .point-info-panel {
-  position: absolute; right: 12px; top: 60px; width: 280px; z-index: 25;
-  background: rgba(10, 18, 35, .95);
+    position: absolute;
+    right: 12px;
+    top: 60px;
+    width: 280px;
+    z-index: 25;
+    background: rgba(10, 18, 35, .95);
 }
-.gis-error-banner { position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 30; }
+
+.gis-error-banner {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    right: 12px;
+    z-index: 30;
+}
 
 .gis-legend {
-  position: absolute; left: 12px; bottom: 12px; z-index: 20;
-  background: rgba(10, 18, 35, .92);
-  border: 1px solid #1e293b;
-  border-radius: 10px;
-  padding: 8px 12px;
-  font-size: 11px;
-  color: #94a3b8;
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    z-index: 20;
+    background: rgba(10, 18, 35, .92);
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #94a3b8;
 }
+
 .legend-title {
-  font-size: 10px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .6px; color: #475569; margin-bottom: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #475569;
+    margin-bottom: 6px;
 }
-.legend-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.legend-row:last-child { margin-bottom: 0; }
-.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+.legend-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.legend-row:last-child {
+    margin-bottom: 0;
+}
+
+.legend-row--toggle {
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 2px 4px;
+    transition: background .15s, opacity .15s;
+}
+
+.legend-row--toggle:hover {
+    background: #1e293b;
+}
+
+.legend-row--off {
+    opacity: .4;
+}
+
+.legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.drag-hint {
+    margin-top: 6px;
+    font-size: 10px;
+    color: #f59e0b;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
 
 .gis-route-legend {
-  position: absolute; left: 12px; top: 60px; z-index: 20;
-  background: rgba(10, 18, 35, .92);
-  border: 1px solid #1e293b;
-  border-radius: 10px;
-  padding: 8px 12px;
-  font-size: 11px;
-  color: #94a3b8;
-  max-width: 220px;
-  max-height: 260px;
-  overflow-y: auto;
+    position: absolute;
+    left: 12px;
+    top: 60px;
+    z-index: 20;
+    background: rgba(10, 18, 35, .92);
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #94a3b8;
+    max-width: 220px;
+    max-height: 260px;
+    overflow-y: auto;
 }
-.legend-line { width: 16px; height: 3px; border-radius: 2px; flex-shrink: 0; }
-.legend-route-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.legend-line {
+    width: 16px;
+    height: 3px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.legend-route-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 </style>

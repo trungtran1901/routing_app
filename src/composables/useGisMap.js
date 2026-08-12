@@ -1,4 +1,4 @@
-import { ref, shallowRef } from 'vue'
+import { ref, reactive, shallowRef } from 'vue'
 import gisAPI from '../services/gis'
 import { boundsToBBox, pathToLineString, cloneGeometry, isValidLineString } from '../utils/geo'
 
@@ -7,32 +7,30 @@ const SEARCH_DEBOUNCE_MS = 350
 const POINTS_LIMIT = 2000
 const SEGMENTS_LIMIT = 2000
 
-/**
- * All GIS map state + API orchestration in one composable.
- * points/segments are shallowRef<Map> (not deep-reactive) so Vue never
- * tracks per-coordinate mutations of thousands of features.
- */
 export function useGisMap() {
-  // ── Viewport data ──
   const points = shallowRef(new Map())
   const segments = shallowRef(new Map())
   const loadingMap = ref(false)
   const mapError = ref('')
 
-  // ── Selection ──
   const selectedPoint = ref(null)
   const selectedSegmentId = ref(null)
   const segmentDetail = ref(null)
   const loadingSegmentDetail = ref(false)
   const segmentDetailError = ref('')
 
-  // ── Route (full tuyến, independent of viewport) ──
   const selectedRouteId = ref('')
   const routeSegments = shallowRef([])
   const loadingRoute = ref(false)
   const routeError = ref('')
 
-  // ── Geometry editing ──
+  const routeMode = ref(false)
+  const routeModeLabel = ref('')
+  const routeModePoints = shallowRef(new Map())
+  const routeModeSegments = shallowRef(new Map())
+  const loadingRouteMode = ref(false)
+  const routeModeError = ref('')
+
   const editingSegmentId = ref(null)
   const originalGeometry = ref(null)
   const currentGeometry = ref(null)
@@ -41,7 +39,12 @@ export function useGisMap() {
   const saveError = ref('')
   const conflict = ref(false)
 
-  // ── Search (points only — see README_GIS.md §9) ──
+  const pointsDraggable = ref(false)
+  const savingPointId = ref(null)
+  const pointSaveError = ref('')
+
+  const visiblePointTypes = reactive({ station: true, closure: true, customer: true, other: true })
+
   const searchQuery = ref('')
   const searchResults = ref([])
   const searchLoading = ref(false)
@@ -53,18 +56,17 @@ export function useGisMap() {
   let searchTimer = null
   let searchAbort = null
 
-  // ── Viewport loading (debounced on map idle, race-safe) ──
   function scheduleViewportLoad(bounds, zoom) {
+    if (routeMode.value) return
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => loadViewport(bounds, zoom), IDLE_DEBOUNCE_MS)
   }
 
   async function loadViewport(bounds, zoom) {
-    if (!bounds) return
+    if (!bounds || routeMode.value) return
     const bbox = boundsToBBox(bounds)
     if (bbox.min_lng >= bbox.max_lng || bbox.min_lat >= bbox.max_lat) return
 
-    // Cancel any in-flight viewport request before starting a new one
     if (viewportAbort) viewportAbort.abort()
     viewportAbort = new AbortController()
     const myRequestId = ++viewportRequestId
@@ -79,7 +81,6 @@ export function useGisMap() {
         gisAPI.getSegments({ ...bbox, zoom, limit: SEGMENTS_LIMIT }, signal)
       ])
 
-      // Stale response guard: a newer viewport request already superseded this one
       if (myRequestId !== viewportRequestId) return
 
       const nextPoints = new Map()
@@ -97,7 +98,6 @@ export function useGisMap() {
     }
   }
 
-  // ── Selection ──
   function clearSelection() {
     selectedPoint.value = null
     selectedSegmentId.value = null
@@ -127,15 +127,14 @@ export function useGisMap() {
     }
   }
 
-  // ── Route ──
   async function loadRoute(routeId) {
     if (!routeId) return
     selectedRouteId.value = routeId
     loadingRoute.value = true
     routeError.value = ''
     try {
-      const res = await gisAPI.getRoute(routeId)
-      routeSegments.value = res.data?.data || []
+      const res = await gisAPI.getRouteMap({ tuyen_id: routeId })
+      routeSegments.value = res.data?.data?.segments || []
     } catch (err) {
       routeSegments.value = []
       routeError.value = err?.response?.data?.detail || 'Không tải được tuyến'
@@ -150,11 +149,124 @@ export function useGisMap() {
     routeError.value = ''
   }
 
-  // ── Geometry editing ──
+  async function enterRouteMode({ tuyenId, maTuyen }) {
+    loadingRouteMode.value = true
+    routeModeError.value = ''
+    clearSelection()
+    try {
+      const params = {}
+      if (tuyenId) params.tuyen_id = tuyenId
+      else if (maTuyen) params.ma_tuyen = maTuyen
+      else throw new Error('missing tuyenId/maTuyen')
+
+      const res = await gisAPI.getRouteMap(params)
+      const data = res.data?.data
+      if (!data) throw new Error('empty')
+
+      const pMap = new Map()
+      for (const p of data.points || []) pMap.set(p.source_id, p)
+      const sMap = new Map()
+      for (const s of data.segments || []) sMap.set(s.source_id, s)
+
+      routeModePoints.value = pMap
+      routeModeSegments.value = sMap
+      routeModeLabel.value = maTuyen || data.tuyen_id || ''
+      routeMode.value = true
+    } catch (err) {
+      routeModeError.value = err?.response?.data?.detail || 'Không tải được tuyến'
+      routeMode.value = false
+      routeModePoints.value = new Map()
+      routeModeSegments.value = new Map()
+    } finally {
+      loadingRouteMode.value = false
+    }
+  }
+
+  function exitRouteMode() {
+    routeMode.value = false
+    routeModeLabel.value = ''
+    routeModeError.value = ''
+    routeModePoints.value = new Map()
+    routeModeSegments.value = new Map()
+    clearSelection()
+  }
+
+  function togglePointTypeVisible(key) {
+    visiblePointTypes[key] = !visiblePointTypes[key]
+  }
+
+  function setPointsDraggable(val) {
+    pointsDraggable.value = val
+  }
+
+  function applyPointUpdate(newPoint) {
+    if (points.value.has(newPoint.source_id)) {
+      const next = new Map(points.value)
+      next.set(newPoint.source_id, { ...next.get(newPoint.source_id), ...newPoint })
+      points.value = next
+    }
+    if (routeModePoints.value.has(newPoint.source_id)) {
+      const next = new Map(routeModePoints.value)
+      next.set(newPoint.source_id, { ...next.get(newPoint.source_id), ...newPoint })
+      routeModePoints.value = next
+    }
+    if (selectedPoint.value?.source_id === newPoint.source_id || selectedPoint.value?.ma_diem === newPoint.ma_diem) {
+      selectedPoint.value = { ...selectedPoint.value, ...newPoint }
+    }
+  }
+
+  function applySegmentGeometryUpdate(segmentId, geometry, geometryVersion) {
+    if (segments.value.has(segmentId)) {
+      const next = new Map(segments.value)
+      next.set(segmentId, { ...next.get(segmentId), geometry, geometry_version: geometryVersion })
+      segments.value = next
+    }
+    if (routeModeSegments.value.has(segmentId)) {
+      const next = new Map(routeModeSegments.value)
+      next.set(segmentId, { ...next.get(segmentId), geometry, geometry_version: geometryVersion })
+      routeModeSegments.value = next
+    }
+  }
+
+  async function updatePointGeometry(point, lat, lng) {
+    const pointId = point.source_id
+    savingPointId.value = pointId
+    pointSaveError.value = ''
+    try {
+      const res = await gisAPI.updatePointGeometry(pointId, {
+        geometry: { type: 'Point', coordinates: [lng, lat] }
+      })
+      const data = res.data?.data
+      if (!data?.point) throw new Error('empty')
+
+      applyPointUpdate(data.point)
+
+      const refreshedIds = data.refreshed_auto_segments || []
+      await Promise.all(refreshedIds.map(async id => {
+        try {
+          const segRes = await gisAPI.getSegmentGeometry(id)
+          const geomData = segRes.data?.data
+          if (geomData?.geometry) {
+            applySegmentGeometryUpdate(id, geomData.geometry, geomData.geometry_version)
+          }
+        } catch {
+          return
+        }
+      }))
+
+      return data
+    } catch (err) {
+      pointSaveError.value = err?.response?.data?.detail || 'Không lưu được vị trí điểm.'
+      return null
+    } finally {
+      savingPointId.value = null
+    }
+  }
+
   function startEdit(segmentId, geometry) {
     editingSegmentId.value = segmentId
     originalGeometry.value = cloneGeometry(geometry)
-    currentGeometry.value = cloneGeometry(geometry) // independent clone, not a reference
+    currentGeometry.value = cloneGeometry(geometry)
     isDirty.value = false
     saveError.value = ''
     conflict.value = false
@@ -198,10 +310,7 @@ export function useGisMap() {
       })
       const updated = res.data?.data
       if (updated) {
-        // Backend response is the source of truth for geometry_version/source
-        const nextSegments = new Map(segments.value)
-        nextSegments.set(updated.source_id, { ...nextSegments.get(updated.source_id), ...updated })
-        segments.value = nextSegments
+        applySegmentGeometryUpdate(updated.source_id, updated.geometry, updated.geometry_version)
 
         if (segmentDetail.value?.segment?.source_id === updated.source_id) {
           segmentDetail.value = { ...segmentDetail.value, segment: updated }
@@ -231,17 +340,14 @@ export function useGisMap() {
     const detail = res.data?.data
     if (detail) {
       segmentDetail.value = detail
-      const nextSegments = new Map(segments.value)
-      nextSegments.set(detail.segment.source_id, detail.segment)
-      segments.value = nextSegments
+      applySegmentGeometryUpdate(detail.segment.source_id, detail.segment.geometry, detail.segment.geometry_version)
     }
     conflict.value = false
     saveError.value = ''
     return detail
   }
 
-  // ── Search (debounced, race-safe, points-only per API) ──
-  function scheduleSearch(query) {
+  function scheduleSearch(query, type) {
     searchQuery.value = query
     if (searchTimer) clearTimeout(searchTimer)
     if (!query || !query.trim()) {
@@ -249,10 +355,10 @@ export function useGisMap() {
       searchLoading.value = false
       return
     }
-    searchTimer = setTimeout(() => runSearch(query.trim()), SEARCH_DEBOUNCE_MS)
+    searchTimer = setTimeout(() => runSearch(query.trim(), type), SEARCH_DEBOUNCE_MS)
   }
 
-  async function runSearch(query) {
+  async function runSearch(query, type) {
     if (searchAbort) searchAbort.abort()
     searchAbort = new AbortController()
     const signal = searchAbort.signal
@@ -260,7 +366,7 @@ export function useGisMap() {
     searchLoading.value = true
     searchError.value = ''
     try {
-      const res = await gisAPI.search(query, 20, signal)
+      const res = await gisAPI.search(query, 20, signal, type)
       if (signal.aborted) return
       searchResults.value = res.data?.data || []
     } catch (err) {
@@ -289,11 +395,16 @@ export function useGisMap() {
     points, segments, loadingMap, mapError,
     selectedPoint, selectedSegmentId, segmentDetail, loadingSegmentDetail, segmentDetailError,
     selectedRouteId, routeSegments, loadingRoute, routeError,
+    routeMode, routeModeLabel, routeModePoints, routeModeSegments, loadingRouteMode, routeModeError,
     editingSegmentId, originalGeometry, currentGeometry, isDirty, saving, saveError, conflict,
+    pointsDraggable, savingPointId, pointSaveError,
+    visiblePointTypes,
     searchQuery, searchResults, searchLoading, searchError,
     scheduleViewportLoad, loadViewport,
     clearSelection, selectPoint, selectSegment,
     loadRoute, clearRoute,
+    enterRouteMode, exitRouteMode,
+    togglePointTypeVisible, setPointsDraggable, updatePointGeometry,
     startEdit, updateCurrentGeometryFromPath, cancelEdit, saveEdit, reloadSegmentAfterConflict,
     scheduleSearch, clearSearch,
     dispose

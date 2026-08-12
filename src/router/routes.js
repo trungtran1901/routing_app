@@ -6,12 +6,12 @@ const routes = [
       { path: '', component: () => import('pages/IndexPage.vue') },
       { path: 'route/:tuyenId', component: () => import('pages/IndexPage.vue') },
       { path: 'sid/:sid', component: () => import('pages/SidRouteDiagram.vue') },
-      { path: 'map', component: () => import('pages/CableMapPage.vue') }, // NEW: GIS map page
+      { path: 'map', component: () => import('pages/CableMapPage.vue') },
+      { path: 'route/map/:maTuyen', component: () => import('pages/CableMapPage.vue') },
+      { path: 'sid/map/:sid', component: () => import('pages/SidMapPage.vue') },
     ],
   },
 
-  // Always leave this as last one,
-  // but you can also remove it
   {
     path: '/:catchAll(.*)*',
     component: () => import('pages/ErrorNotFound.vue'),
