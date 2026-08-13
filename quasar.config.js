@@ -10,7 +10,7 @@ export default defineConfig((/* ctx */) => {
     // app boot file (/src/boot)
     // --> boot files are part of "main.js"
     // https://v2.quasar.dev/quasar-cli-vite/boot-files
-    boot: [],
+    boot: ['keycloak'],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
     css: ['app.sass'],
@@ -45,7 +45,11 @@ export default defineConfig((/* ctx */) => {
 
       publicPath: '/route/',
       // analyze: true,
-      // env: {},
+      //  env: {
+      //   URL_AUTH: process.env.URL_AUTH,
+      //   REALM: process.env.REALM,
+      //   CLIENT_ID: process.env.CLIENT_ID
+      // },
       // rawDefine: {}
       // ignorePublicFolder: true,
       // minify: false,

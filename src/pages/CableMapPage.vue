@@ -4,6 +4,7 @@
             <MapSearchBar :model-value="gis.searchQuery.value" :results="gis.searchResults.value"
                 :loading="gis.searchLoading.value" :error="gis.searchError.value" @search="onSearch"
                 @select="onSearchSelect" @clear="gis.clearSearch" />
+            <PlaceSearchBox ref="placeSearchRef" @select="onPlaceSelect" />
             <MapToolbar :map-type="mapType" :loading="gis.loadingMap.value || gis.loadingRouteMode.value"
                 :has-route="!!gis.selectedRouteId.value" :points-draggable="gis.pointsDraggable.value"
                 :route-mode="gis.routeMode.value" :route-mode-label="gis.routeModeLabel.value"
@@ -16,9 +17,9 @@
             :route-segments="gis.routeSegments.value" :selected-segment-id="gis.selectedSegmentId.value"
             :editing-segment-id="gis.editingSegmentId.value" :current-geometry="gis.currentGeometry.value"
             :map-type="mapType" :points-draggable="gis.pointsDraggable.value"
-            :visible-point-types="gis.visiblePointTypes" @idle="onMapIdle" @point-click="onPointClick"
-            @segment-click="onSegmentClick" @background-click="gis.clearSelection" @geometry-changed="onGeometryChanged"
-            @point-dragend="onPointDragEnd" />
+            :visible-point-types="gis.visiblePointTypes" @ready="onMapReady" @idle="onMapIdle"
+            @point-click="onPointClick" @segment-click="onSegmentClick" @background-click="onBackgroundClick"
+            @geometry-changed="onGeometryChanged" @point-dragend="onPointDragEnd" @pin-change="onPinChange" />
 
         <div class="gis-legend">
             <div class="legend-title">Loại điểm (bấm để ẩn/hiện)</div>
@@ -32,6 +33,9 @@
             </div>
             <div v-if="gis.pointsDraggable.value" class="drag-hint">
                 <q-icon name="info" size="12px" /> Kéo marker để lưu vị trí mới
+            </div>
+            <div class="drag-hint pin-hint">
+                <q-icon name="push_pin" size="12px" /> Bấm vào bản đồ để ghim toạ độ
             </div>
         </div>
 
@@ -74,6 +78,25 @@
             @close="gis.clearSelection" @start-edit="onStartEdit" @save="onSaveEdit" @cancel="gis.cancelEdit"
             @fit="onFitSegment" @view-route="onViewRoute" @reload-conflict="onReloadConflict" />
 
+        <q-card v-if="pinInfo" dark class="pin-info-panel">
+            <q-card-section class="row items-center q-pb-none">
+                <q-icon name="push_pin" color="red-5" size="18px" class="q-mr-sm" />
+                <div class="text-subtitle2">Vị trí đã ghim</div>
+                <q-space />
+                <q-btn dense flat round icon="close" size="sm" @click="clearPinInfo" />
+            </q-card-section>
+            <q-card-section class="text-caption q-gutter-xs">
+                <div><b>Toạ độ:</b> {{ pinInfo.lat.toFixed(6) }}, {{ pinInfo.lng.toFixed(6) }}</div>
+                <div v-if="pinInfo.address"><b>Địa chỉ:</b> {{ pinInfo.address }}</div>
+                <div v-else class="text-grey-6"><q-spinner size="12px" /> Đang tra địa chỉ...</div>
+            </q-card-section>
+            <q-card-section class="q-pt-none row q-gutter-sm">
+                <q-btn dense no-caps flat color="grey-4" icon="content_copy" label="Copy toạ độ"
+                    @click="copyPinCoords" />
+                <q-btn dense no-caps flat color="grey-4" icon="center_focus_strong" label="Fit" @click="onFitPin" />
+            </q-card-section>
+        </q-card>
+
         <q-banner v-if="gis.mapError.value" dense class="gis-error-banner bg-negative text-white">
             {{ gis.mapError.value }}
         </q-banner>
@@ -90,6 +113,7 @@ import { Notify } from 'quasar'
 import GoogleMapView from '../components/gis/GoogleMapView.vue'
 import MapToolbar from '../components/gis/MapToolbar.vue'
 import MapSearchBar from '../components/gis/MapSearchBar.vue'
+import PlaceSearchBox from '../components/gis/PlaceSearchBox.vue'
 import SegmentInfoPanel from '../components/gis/SegmentInfoPanel.vue'
 import { useGisMap } from '../composables/useGisMap'
 import { POINT_TYPE_META } from '../utils/pointTypes'
@@ -99,7 +123,10 @@ const route = useRoute()
 const router = useRouter()
 const gis = useGisMap()
 const mapViewRef = ref(null)
+const placeSearchRef = ref(null)
+const mapInstance = ref(null)
 const mapType = ref('roadmap')
+const pinInfo = ref(null)
 let lastBounds = null
 let lastZoom = null
 
@@ -117,6 +144,10 @@ const routeLegend = computed(() => {
         .map(([maTuyen, color]) => ({ maTuyen, color }))
         .sort((a, b) => a.maTuyen.localeCompare(b.maTuyen))
 })
+
+function onMapReady(map) {
+    mapInstance.value = map
+}
 
 function onMapIdle({ bounds, zoom }) {
     lastBounds = bounds
@@ -151,6 +182,10 @@ function onPointClick(point) {
 
 async function onSegmentClick(segmentId) {
     await gis.selectSegment(segmentId)
+}
+
+function onBackgroundClick() {
+    gis.clearSelection()
 }
 
 async function onPointDragEnd({ point, lat, lng }) {
@@ -193,6 +228,31 @@ function onSearchSelect(result) {
     })
     mapViewRef.value?.panToPoint({ lat: result.lat, lng: result.lng })
     gis.clearSearch()
+}
+
+function onPlaceSelect(place) {
+    mapViewRef.value?.panAndPin(place.lat, place.lng, place.address || place.name)
+}
+
+function onPinChange(info) {
+    pinInfo.value = info
+}
+
+function clearPinInfo() {
+    pinInfo.value = null
+    mapViewRef.value?.clearPin()
+}
+
+function copyPinCoords() {
+    if (!pinInfo.value) return
+    const text = `${pinInfo.value.lat}, ${pinInfo.value.lng}`
+    navigator.clipboard?.writeText(text)
+    Notify.create({ type: 'positive', message: 'Đã copy toạ độ.' })
+}
+
+function onFitPin() {
+    if (!pinInfo.value) return
+    mapViewRef.value?.panToPoint({ lat: pinInfo.value.lat, lng: pinInfo.value.lng })
 }
 
 function onGoSid(sidValue) {
@@ -294,6 +354,15 @@ onBeforeUnmount(() => {
     background: rgba(10, 18, 35, .95);
 }
 
+.pin-info-panel {
+    position: absolute;
+    right: 12px;
+    top: 60px;
+    width: 280px;
+    z-index: 26;
+    background: rgba(10, 18, 35, .95);
+}
+
 .gis-error-banner {
     position: absolute;
     bottom: 12px;
@@ -366,6 +435,10 @@ onBeforeUnmount(() => {
     gap: 4px;
 }
 
+.pin-hint {
+    color: #ff453a;
+}
+
 .gis-route-legend {
     position: absolute;
     left: 12px;
@@ -393,5 +466,58 @@ onBeforeUnmount(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .gis-map-page {
+        height: calc(100vh - 50px);
+    }
+
+    .gis-map-overlay-top {
+        top: 6px;
+        left: 6px;
+        right: 6px;
+    }
+
+    .point-info-panel,
+    .pin-info-panel {
+        left: 6px;
+        right: 6px;
+        top: auto;
+        bottom: 120px;
+        width: auto;
+        max-width: none;
+    }
+
+    .gis-route-legend {
+        left: 6px;
+        right: 6px;
+        top: auto;
+        bottom: 120px;
+        max-width: none;
+    }
+
+    .gis-legend {
+        left: 6px;
+        right: 6px;
+        bottom: 6px;
+        max-width: none;
+    }
+
+    .gis-error-banner {
+        left: 6px;
+        right: 6px;
+    }
+}
+
+@media (max-width: 480px) {
+    .gis-legend {
+        font-size: 10px;
+        padding: 6px 8px;
+    }
+
+    .legend-row {
+        margin-bottom: 2px;
+    }
 }
 </style>

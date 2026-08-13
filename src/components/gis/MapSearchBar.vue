@@ -126,7 +126,9 @@ function onInput(val) {
 
 .gis-search {
     position: relative;
-    width: 360px;
+    width: 100%;
+    max-width: 360px;
+    /* width: 360px; */
     z-index: 100;
 }
 

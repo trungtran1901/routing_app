@@ -1,6 +1,5 @@
 <template>
     <div class="gis-toolbar">
-        <!-- Nhóm điều khiển bản đồ -->
         <div class="toolbar-section map-type-section">
             <q-btn-toggle v-model="mapTypeLocal" unelevated no-caps class="ios-segmented" toggle-color="white" size="sm"
                 text-color="grey-5" toggle-text-color="dark" :options="[
@@ -11,12 +10,10 @@
 
         <div class="toolbar-divider" />
 
-        <!-- Làm mới -->
         <q-btn round flat dense icon="refresh" class="ios-icon-btn" title="Làm mới" @click="$emit('refresh')">
             <q-tooltip>Làm mới</q-tooltip>
         </q-btn>
 
-        <!-- Chỉnh điểm -->
         <q-btn flat dense no-caps class="ios-action-btn" :class="{ active: pointsDraggable }"
             @click="$emit('update:pointsDraggable', !pointsDraggable)">
             <q-icon name="open_with" size="18px" />
@@ -29,7 +26,6 @@
             </q-tooltip>
         </q-btn>
 
-        <!-- Route actions -->
         <template v-if="hasRoute && !routeMode">
             <div class="toolbar-divider" />
 
@@ -44,7 +40,6 @@
             </q-btn>
         </template>
 
-        <!-- Route mode -->
         <template v-if="routeMode">
             <div class="route-mode">
                 <q-icon name="route" size="16px" />
@@ -61,7 +56,6 @@
 
         <div class="toolbar-spacer" />
 
-        <!-- SID search -->
         <div class="sid-search">
             <q-icon name="search" size="19px" class="sid-search-icon" />
 
@@ -73,7 +67,6 @@
             </q-btn>
         </div>
 
-        <!-- Loading -->
         <transition name="fade">
             <div v-if="loading" class="loading-pill">
                 <q-spinner-ios size="16px" />
@@ -149,16 +142,11 @@ function onSidGo() {
 </script>
 
 <style>
-/* =========================================================
-   iOS / iPhone inspired toolbar
-   ========================================================= */
-
 .gis-toolbar {
     display: flex;
     align-items: center;
     gap: 6px;
 
-    /* min-height: 58px; */
     padding: 5px 5px;
 
     color: #f5f5f7;
@@ -180,11 +168,6 @@ function onSidGo() {
 
     overflow: hidden;
 }
-
-
-/* =========================================================
-   Segmented control
-   ========================================================= */
 
 .map-type-section {
     display: flex;
@@ -220,11 +203,6 @@ function onSidGo() {
         0 2px 6px rgba(0, 0, 0, 0.18);
 }
 
-
-/* =========================================================
-   Divider
-   ========================================================= */
-
 .toolbar-divider {
     width: 1px;
     height: 24px;
@@ -232,11 +210,6 @@ function onSidGo() {
 
     background: rgba(255, 255, 255, 0.12);
 }
-
-
-/* =========================================================
-   Icon button
-   ========================================================= */
 
 .ios-icon-btn {
     width: 38px;
@@ -265,11 +238,6 @@ function onSidGo() {
     color: #ff453a;
     background: rgba(255, 69, 58, 0.10);
 }
-
-
-/* =========================================================
-   Action button
-   ========================================================= */
 
 .ios-action-btn {
     min-height: 38px;
@@ -303,11 +271,6 @@ function onSidGo() {
     color: #ffcc00;
     background: rgba(255, 204, 0, 0.12);
 }
-
-
-/* =========================================================
-   Route mode
-   ========================================================= */
 
 .route-mode {
     display: flex;
@@ -346,19 +309,9 @@ function onSidGo() {
     background: rgba(255, 69, 58, 0.1);
 }
 
-
-/* =========================================================
-   Spacer
-   ========================================================= */
-
 .toolbar-spacer {
     flex: 1 1 auto;
 }
-
-
-/* =========================================================
-   SID Search
-   ========================================================= */
 
 .sid-search {
     display: flex;
@@ -430,11 +383,6 @@ function onSidGo() {
     transform: scale(0.9);
 }
 
-
-/* =========================================================
-   Loading
-   ========================================================= */
-
 .loading-pill {
     display: flex;
     align-items: center;
@@ -456,11 +404,6 @@ function onSidGo() {
     white-space: nowrap;
 }
 
-
-/* =========================================================
-   Animation
-   ========================================================= */
-
 .fade-enter-active,
 .fade-leave-active {
     transition:
@@ -473,11 +416,6 @@ function onSidGo() {
     opacity: 0;
     transform: scale(0.95);
 }
-
-
-/* =========================================================
-   Responsive
-   ========================================================= */
 
 @media (max-width: 900px) {
     .gis-toolbar {
@@ -503,6 +441,7 @@ function onSidGo() {
 @media (max-width: 650px) {
     .gis-toolbar {
         border-radius: 15px;
+        flex-wrap: wrap;
     }
 
     .map-type-section {

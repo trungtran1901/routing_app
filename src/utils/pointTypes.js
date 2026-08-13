@@ -1,9 +1,3 @@
-/**
- * Maps backend `point_type` (Vietnamese labels returned by GET /api/v1/map/points,
- * e.g. "Trạm", "Măng xông", "Khách hàng") to a normalized key + distinct icon
- * SVG + display metadata, so the map layer and the legend share one source
- * of truth instead of duplicating the mapping.
- */
 export const POINT_TYPE_META = {
   station: {
     label: 'Trạm',
@@ -50,8 +44,6 @@ export const POINT_TYPE_META = {
   }
 }
 
-// Reverse lookup: backend point_type label -> normalized key.
-// Add new mappings here if the backend introduces more point_type values.
 const LABEL_TO_KEY = {
   'Trạm': 'station',
   'Măng xông': 'closure',
@@ -68,10 +60,6 @@ export function pointTypeMeta(pointType) {
 
 const iconCache = new Map()
 
-/**
- * Builds (and caches) a google.maps.Icon for the given backend point_type.
- * Requires the Maps JS API to already be loaded (uses google.maps.Size/Point).
- */
 export function buildPointIcon(googleMaps, pointType) {
   const key = normalizePointType(pointType)
   if (iconCache.has(key)) return iconCache.get(key)
@@ -81,7 +69,8 @@ export function buildPointIcon(googleMaps, pointType) {
   const icon = {
     url,
     scaledSize: new googleMaps.Size(meta.size, meta.size),
-    anchor: new googleMaps.Point(meta.size / 2, meta.size / 2)
+    anchor: new googleMaps.Point(meta.size / 2, meta.size / 2),
+    labelOrigin: new googleMaps.Point(meta.size + 42, meta.size / 2)
   }
   iconCache.set(key, icon)
   return icon

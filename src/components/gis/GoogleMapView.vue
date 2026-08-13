@@ -8,10 +8,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch, markRaw } from 'vue'
+import { ref, shallowRef, onMounted, onBeforeUnmount, watch, markRaw } from 'vue'
 import { loadGoogleMaps } from '../../utils/googleMapsLoader'
 import { coordsToPath } from '../../utils/geo'
-import { buildPointIcon, normalizePointType } from '../../utils/pointTypes'
+import { buildPointIcon, normalizePointType, pointTypeMeta } from '../../utils/pointTypes'
 import { getRouteColor } from '../../utils/routeColors'
 
 const props = defineProps({
@@ -32,7 +32,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
-    'ready', 'idle', 'point-click', 'segment-click', 'background-click', 'geometry-changed', 'point-dragend'
+    'ready', 'idle', 'point-click', 'segment-click', 'background-click', 'geometry-changed', 'point-dragend', 'pin-change'
 ])
 
 const mapEl = ref(null)
@@ -40,9 +40,11 @@ const ready = ref(false)
 
 let map = null
 let googleMaps = null
+let geocoder = null
 const pointMarkers = new Map()
 const segmentPolylines = new Map()
 const routePolylines = []
+const pinMarker = shallowRef(null)
 let editingPolyline = null
 let editListeners = []
 let idleListener = null
@@ -50,6 +52,7 @@ let idleListener = null
 const SEGMENT_COLOR_SELECTED = '#facc15'
 const EDIT_COLOR = '#ef4444'
 const HIT_STROKE_WEIGHT = 18
+const LABEL_ZOOM_MIN = 10
 
 onMounted(async () => {
     try {
@@ -67,14 +70,23 @@ onMounted(async () => {
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
+        gestureHandling: 'greedy',
         clickableIcons: false
     }))
 
-    map.addListener('click', () => emit('background-click'))
+    geocoder = markRaw(new googleMaps.Geocoder())
+
+    map.addListener('click', e => {
+        emit('background-click')
+        if (!e.latLng) return
+        dropPin(e.latLng.lat(), e.latLng.lng())
+    })
 
     idleListener = map.addListener('idle', () => {
         emit('idle', { bounds: map.getBounds(), zoom: map.getZoom() })
     })
+
+    map.addListener('zoom_changed', () => applyLabelVisibility())
 
     ready.value = true
     emit('ready', map)
@@ -96,6 +108,7 @@ function clearAllOverlays() {
     segmentPolylines.clear()
     routePolylines.forEach(p => p.setMap(null))
     routePolylines.length = 0
+    clearPin()
     stopEditingOverlay()
 }
 
@@ -110,6 +123,33 @@ function applyPointVisibility() {
     })
 }
 
+function wrapLabelText(text) {
+    const words = text.trim().split(/\s+/)
+    if (words.length < 3) return text
+    const mid = Math.ceil(words.length / 2)
+    return words.slice(0, mid).join(' ') + '\n' + words.slice(mid).join(' ')
+}
+
+function buildLabelConfig(point) {
+    const text = point.ten_diem || point.ma_diem || ''
+    if (!text) return null
+    return {
+        text: wrapLabelText(text),
+        color: pointTypeMeta(point.point_type).color,
+        fontSize: '11px',
+        fontWeight: '500',
+        className: 'gis-marker-label'
+    }
+}
+
+function applyLabelVisibility() {
+    if (!map) return
+    const show = map.getZoom() >= LABEL_ZOOM_MIN
+    pointMarkers.forEach(entry => {
+        entry.marker.setLabel(show ? entry.labelConfig : null)
+    })
+}
+
 function syncPoints(pointsMap) {
     if (!map) return
     const seen = new Set()
@@ -118,6 +158,7 @@ function syncPoints(pointsMap) {
         let entry = pointMarkers.get(id)
         const position = { lat: point.lat, lng: point.lng }
         const visible = isPointTypeVisible(point.point_type)
+        const labelConfig = buildLabelConfig(point)
         if (!entry) {
             const marker = new googleMaps.Marker({
                 position,
@@ -132,13 +173,14 @@ function syncPoints(pointsMap) {
                 const pos = marker.getPosition()
                 emit('point-dragend', { point, lat: pos.lat(), lng: pos.lng() })
             })
-            entry = { marker, pointType: point.point_type }
+            entry = { marker, pointType: point.point_type, labelConfig }
             pointMarkers.set(id, entry)
         } else {
             entry.marker.setPosition(position)
             entry.marker.setIcon(buildPointIcon(googleMaps, point.point_type))
             entry.marker.setMap(visible ? map : null)
             entry.pointType = point.point_type
+            entry.labelConfig = labelConfig
         }
     })
     pointMarkers.forEach((entry, id) => {
@@ -147,6 +189,7 @@ function syncPoints(pointsMap) {
             pointMarkers.delete(id)
         }
     })
+    applyLabelVisibility()
 }
 
 function segmentColor(segment, id) {
@@ -320,6 +363,59 @@ function setMapType(type) {
     map?.setMapTypeId(type)
 }
 
+function buildPinIcon() {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48">
+      <path d="M18 0C8.06 0 0 8.06 0 18c0 13.5 18 30 18 30s18-16.5 18-30C36 8.06 27.94 0 18 0z" fill="#ff3b30" stroke="#ffffff" stroke-width="1.5"/>
+      <circle cx="18" cy="18" r="7.5" fill="#ffffff"/>
+    </svg>`
+    return {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+        scaledSize: new googleMaps.Size(36, 48),
+        anchor: new googleMaps.Point(18, 48)
+    }
+}
+
+function dropPin(lat, lng, silent) {
+    if (!map) return
+    if (pinMarker.value) {
+        pinMarker.value.setPosition({ lat, lng })
+    } else {
+        pinMarker.value = new googleMaps.Marker({
+            position: { lat, lng },
+            map,
+            draggable: true,
+            zIndex: 60,
+            icon: buildPinIcon()
+        })
+        pinMarker.value.addListener('dragend', () => {
+            const pos = pinMarker.value.getPosition()
+            resolvePin(pos.lat(), pos.lng())
+        })
+    }
+    if (!silent) resolvePin(lat, lng)
+}
+
+function resolvePin(lat, lng) {
+    emit('pin-change', { lat, lng, address: null })
+    geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+        const address = status === 'OK' && results?.[0] ? results[0].formatted_address : null
+        emit('pin-change', { lat, lng, address })
+    })
+}
+
+function clearPin() {
+    if (pinMarker.value) {
+        pinMarker.value.setMap(null)
+        pinMarker.value = null
+    }
+}
+
+function panAndPin(lat, lng, address, zoomTo = 17) {
+    panToPoint({ lat, lng }, zoomTo)
+    dropPin(lat, lng, true)
+    emit('pin-change', { lat, lng, address: address || null })
+}
+
 watch(() => props.points, (val) => { if (ready.value) syncPoints(val) })
 watch(() => props.segments, (val) => { if (ready.value) syncSegments(val) })
 watch(() => props.routeSegments, (val) => { if (ready.value) syncRoute(val) })
@@ -340,7 +436,7 @@ watch(() => props.currentGeometry, (geometry) => {
     startEditingOverlay(geometry)
 })
 
-defineExpose({ fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentData })
+defineExpose({ fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentData, dropPin, clearPin, panAndPin })
 </script>
 
 <style scoped>
@@ -348,11 +444,34 @@ defineExpose({ fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentDat
     position: relative;
     width: 100%;
     height: 100%;
-    min-height: 480px;
+    min-height: 320px;
 }
 
 .gis-map-canvas {
     width: 100%;
     height: 100%;
+}
+
+@media (max-width: 768px) {
+    .gis-map-root {
+        min-height: 280px;
+    }
+}
+</style>
+
+<style>
+.gis-marker-label {
+    font-family: Roboto, Arial, sans-serif;
+    font-weight: 500;
+    white-space: pre-line;
+    line-height: 1.25;
+    pointer-events: none;
+    letter-spacing: 0;
+    text-shadow:
+        -1px -1px 1px rgba(255, 255, 255, 0.95),
+        1px -1px 1px rgba(255, 255, 255, 0.95),
+        -1px 1px 1px rgba(255, 255, 255, 0.95),
+        1px 1px 1px rgba(255, 255, 255, 0.95),
+        0 0 3px rgba(255, 255, 255, 0.9);
 }
 </style>
