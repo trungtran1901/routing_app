@@ -98,9 +98,11 @@
                 <q-btn dense no-caps flat color="grey-4" icon="content_copy" label="Copy toạ độ"
                     @click="copyPinCoords" />
                 <q-btn dense no-caps flat color="grey-4" icon="center_focus_strong" label="Fit" @click="onFitPin" />
+                <q-btn dense no-caps color="primary" icon="add_location_alt" label="Thêm điểm" @click="openAddPoint" />
             </q-card-section>
         </q-card>
-
+        <RemoteAddPointDrawer v-if="pinInfo" v-model="addPointOpen" :view="ADD_POINT_VIEW_NAME" :lat="pinInfo.lat"
+            :lng="pinInfo.lng" :address="pinInfo.address" @created="onPointCreated" />
         <q-banner v-if="gis.mapError.value" dense class="gis-error-banner bg-negative text-white">
             {{ gis.mapError.value }}
         </q-banner>
@@ -122,7 +124,7 @@ import SegmentInfoPanel from '../components/gis/SegmentInfoPanel.vue'
 import { useGisMap } from '../composables/useGisMap'
 import { POINT_TYPE_META } from '../utils/pointTypes'
 import { getRouteColor } from '../utils/routeColors'
-
+import RemoteAddPointDrawer from '../components/gis/RemoteAddPointDrawer.vue'
 const route = useRoute()
 const router = useRouter()
 const gis = useGisMap()
@@ -133,7 +135,19 @@ const mapType = ref('roadmap')
 const pinInfo = ref(null)
 let lastBounds = null
 let lastZoom = null
+const addPointOpen = ref(false)
+const ADD_POINT_VIEW_NAME = 'hatang_quanlytuyen_newversion_detail_insert'
 
+function openAddPoint() {
+    addPointOpen.value = true
+}
+
+function onPointCreated() {
+    Notify.create({ type: 'positive', message: 'Đã thêm điểm mới trên bản đồ.' })
+    clearPinInfo()
+    mapViewRef.value?.clearPin()
+    if (lastBounds) gis.loadViewport(lastBounds, lastZoom)
+}
 const activePoints = computed(() => gis.routeMode.value ? gis.routeModePoints.value : gis.points.value)
 const activeSegments = computed(() => gis.routeMode.value ? gis.routeModeSegments.value : gis.segments.value)
 

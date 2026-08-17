@@ -17,17 +17,19 @@
   "dependencies": {
     "@quasar/extras": "^1.16.4",
     "axios": "^1.16.0",
+    "keycloak-js": "^25.0.0",
     "quasar": "^2.16.0",
     "vis-network": "^10.0.2",
     "vue": "^3.5.22",
-    "keycloak-js": "^25.0.0",
     "vue-router": "^5.0.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@originjs/vite-plugin-federation": "^1.4.1",
     "@quasar/app-vite": "^2.5.1",
     "@vue/eslint-config-prettier": "^10.2.0",
     "autoprefixer": "^10.4.27",
+    "dotenv": "^17.4.2",
     "eslint": "^9.39.4",
     "eslint-plugin-vue": "^10.8.0",
     "globals": "^17.4.0",

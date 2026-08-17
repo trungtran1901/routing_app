@@ -2,7 +2,12 @@
 // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file
 
 import { defineConfig } from '#q-app/wrappers'
+import federation from '@originjs/vite-plugin-federation'
+import dotenv from 'dotenv'
+
+dotenv.config() 
 export default defineConfig((/* ctx */) => {
+  const remoteEntry = process.env.VITE_MANAGER_APP_REMOTE_ENTRY
   return {
     // https://v2.quasar.dev/quasar-cli-vite/prefetch-feature
     // preFetch: true,
@@ -69,6 +74,18 @@ export default defineConfig((/* ctx */) => {
           },
           { server: false },
         ],
+        ...(remoteEntry
+          ? [
+              federation({
+                name: 'routing-app',
+                remotes: { appweb: remoteEntry },
+                shared: {
+                  vue: { requiredVersion: false, singleton: true },
+                  quasar: { requiredVersion: false, singleton: true }
+                }
+              })
+            ]
+          : []),
       ],
     },
 
@@ -101,7 +118,7 @@ export default defineConfig((/* ctx */) => {
       // directives: [],
 
       // Quasar plugins
-      plugins: [],
+      plugins: ['Notify', 'Dialog', 'Loading'],
     },
 
     // animations: 'all', // --- includes all animations
