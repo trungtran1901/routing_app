@@ -9,6 +9,7 @@ const SEGMENTS_LIMIT = 2000
 
 export function useGisMap() {
   const points = shallowRef(new Map())
+  const clusters = shallowRef([])
   const segments = shallowRef(new Map())
   const loadingMap = ref(false)
   const mapError = ref('')
@@ -83,9 +84,21 @@ export function useGisMap() {
 
       if (myRequestId !== viewportRequestId) return
 
+      // API /map/points giờ trả về mảng hỗn hợp gồm:
+      // - { type: 'point', source_id, ma_diem, ten_diem, lat, lng, point_type, ma_tuyen, ... }
+      // - { type: 'cluster', count, lat, lng, bbox, ma_tuyen }  (gom cụm NxN theo viewport)
+      // Tách riêng 2 luồng để component bản đồ render khác nhau.
       const nextPoints = new Map()
-      for (const p of pointsRes.data?.data || []) nextPoints.set(p.source_id, p)
+      const nextClusters = []
+      for (const item of pointsRes.data?.data || []) {
+        if (item?.type === 'cluster') {
+          nextClusters.push(item)
+        } else {
+          nextPoints.set(item.source_id, item)
+        }
+      }
       points.value = nextPoints
+      clusters.value = nextClusters
 
       const nextSegments = new Map()
       for (const s of segmentsRes.data?.data || []) nextSegments.set(s.source_id, s)
@@ -392,7 +405,7 @@ export function useGisMap() {
   }
 
   return {
-    points, segments, loadingMap, mapError,
+    points, clusters, segments, loadingMap, mapError,
     selectedPoint, selectedSegmentId, segmentDetail, loadingSegmentDetail, segmentDetailError,
     selectedRouteId, routeSegments, loadingRoute, routeError,
     routeMode, routeModeLabel, routeModePoints, routeModeSegments, loadingRouteMode, routeModeError,

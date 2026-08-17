@@ -10,12 +10,13 @@
 <script setup>
 import { ref, shallowRef, onMounted, onBeforeUnmount, watch, markRaw } from 'vue'
 import { loadGoogleMaps } from '../../utils/googleMapsLoader'
-import { coordsToPath } from '../../utils/geo'
+import { coordsToPath, bboxToBounds } from '../../utils/geo'
 import { buildPointIcon, normalizePointType, pointTypeMeta } from '../../utils/pointTypes'
 import { getRouteColor } from '../../utils/routeColors'
 
 const props = defineProps({
     points: { type: Map, required: true },
+    clusters: { type: Array, default: () => [] },
     segments: { type: Map, required: true },
     routeSegments: { type: Array, default: () => [] },
     selectedSegmentId: { type: String, default: null },
@@ -32,7 +33,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
-    'ready', 'idle', 'point-click', 'segment-click', 'background-click', 'geometry-changed', 'point-dragend', 'pin-change'
+    'ready', 'idle', 'point-click', 'segment-click', 'background-click', 'geometry-changed', 'point-dragend', 'pin-change', 'cluster-click'
 ])
 
 const mapEl = ref(null)
@@ -42,6 +43,7 @@ let map = null
 let googleMaps = null
 let geocoder = null
 const pointMarkers = new Map()
+const clusterMarkers = new Map()
 const segmentPolylines = new Map()
 const routePolylines = []
 const pinMarker = shallowRef(null)
@@ -92,6 +94,7 @@ onMounted(async () => {
     emit('ready', map)
 
     syncPoints(props.points)
+    syncClusters(props.clusters)
     syncSegments(props.segments)
     syncRoute(props.routeSegments)
 })
@@ -104,6 +107,8 @@ onBeforeUnmount(() => {
 function clearAllOverlays() {
     pointMarkers.forEach(m => m.marker.setMap(null))
     pointMarkers.clear()
+    clusterMarkers.forEach(m => m.setMap(null))
+    clusterMarkers.clear()
     segmentPolylines.forEach(pair => { pair.hit.setMap(null); pair.visible.setMap(null) })
     segmentPolylines.clear()
     routePolylines.forEach(p => p.setMap(null))
@@ -190,6 +195,83 @@ function syncPoints(pointsMap) {
         }
     })
     applyLabelVisibility()
+}
+
+// ── Cluster rendering ──────────────────────
+// Backend gom cụm điểm theo lưới NxN dựa trên viewport hiện tại và trả về
+// { type: 'cluster', count, lat, lng, bbox, ma_tuyen } thay vì hàng nghìn
+// point riêng lẻ. Cluster không có id ổn định từ server nên ta tự tạo key
+// từ vị trí + số lượng để diff giữa các lần render.
+function clusterKey(c) {
+    return `${c.ma_tuyen || ''}:${c.lat.toFixed(5)}:${c.lng.toFixed(5)}:${c.count}`
+}
+
+function clusterSize(count) {
+    if (count >= 100) return 56
+    if (count >= 50) return 48
+    if (count >= 10) return 42
+    return 36
+}
+
+function buildClusterIcon(count) {
+    const size = clusterSize(count)
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 2}" fill="#0a84ff" fill-opacity="0.28" stroke="#0a84ff" stroke-width="1.5"/>
+    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 9}" fill="#0a84ff"/>
+    <text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle"
+      font-family="system-ui,sans-serif" font-weight="700"
+      font-size="${size >= 48 ? 14 : 12}" fill="#ffffff">${count}</text>
+  </svg>`
+    return {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+        scaledSize: new googleMaps.Size(size, size),
+        anchor: new googleMaps.Point(size / 2, size / 2)
+    }
+}
+
+function syncClusters(list) {
+    if (!map) return
+    const seen = new Set()
+
+    list.forEach(cluster => {
+        const key = clusterKey(cluster)
+        seen.add(key)
+        const position = { lat: cluster.lat, lng: cluster.lng }
+
+        let marker = clusterMarkers.get(key)
+        if (!marker) {
+            marker = new googleMaps.Marker({
+                position,
+                map,
+                icon: buildClusterIcon(cluster.count),
+                zIndex: 40,
+                clickable: true
+            })
+            marker.addListener('click', () => {
+                emit('cluster-click', cluster)
+                if (cluster.bbox) {
+                    const bounds = bboxToBounds(googleMaps, cluster.bbox)
+                    map.fitBounds(bounds, 40)
+                } else {
+                    map.panTo(position)
+                    map.setZoom(Math.min(map.getZoom() + 2, 20))
+                }
+            })
+            marker.addListener('mouseover', () => { map.getDiv().style.cursor = 'pointer' })
+            marker.addListener('mouseout', () => { map.getDiv().style.cursor = '' })
+            clusterMarkers.set(key, marker)
+        } else {
+            marker.setPosition(position)
+            marker.setMap(map)
+        }
+    })
+
+    clusterMarkers.forEach((marker, key) => {
+        if (!seen.has(key)) {
+            marker.setMap(null)
+            clusterMarkers.delete(key)
+        }
+    })
 }
 
 function segmentColor(segment, id) {
@@ -283,6 +365,12 @@ function fitToCurrentData() {
     props.points.forEach(p => {
         if (p.lat != null && p.lng != null) {
             bounds.extend({ lat: p.lat, lng: p.lng })
+            any = true
+        }
+    })
+    props.clusters.forEach(c => {
+        if (c.lat != null && c.lng != null) {
+            bounds.extend({ lat: c.lat, lng: c.lng })
             any = true
         }
     })
@@ -417,6 +505,7 @@ function panAndPin(lat, lng, address, zoomTo = 17) {
 }
 
 watch(() => props.points, (val) => { if (ready.value) syncPoints(val) })
+watch(() => props.clusters, (val) => { if (ready.value) syncClusters(val) })
 watch(() => props.segments, (val) => { if (ready.value) syncSegments(val) })
 watch(() => props.routeSegments, (val) => { if (ready.value) syncRoute(val) })
 watch(() => props.selectedSegmentId, () => { if (ready.value) syncSegments(props.segments) })

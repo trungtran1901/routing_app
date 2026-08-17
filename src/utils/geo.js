@@ -44,6 +44,18 @@ export function boundsToBBox(bounds) {
 }
 
 /**
+ * Converts a server-provided bbox ({min_lng, min_lat, max_lng, max_lat})
+ * into a google.maps.LatLngBounds instance, so callers can fitBounds()
+ * into a cluster's coverage area without manually constructing LatLngs.
+ */
+export function bboxToBounds(googleMaps, bbox) {
+  return new googleMaps.LatLngBounds(
+    { lat: bbox.min_lat, lng: bbox.min_lng },
+    { lat: bbox.max_lat, lng: bbox.max_lng }
+  )
+}
+
+/**
  * Mirrors the backend's own validation rules (README_GIS.md §6) so the
  * frontend can give instant feedback — the backend remains authoritative.
  */

@@ -13,7 +13,7 @@
                 @exit-route-mode="onExitRouteMode" @go-sid="onGoSid" />
         </div>
 
-        <GoogleMapView ref="mapViewRef" :points="activePoints" :segments="activeSegments"
+        <GoogleMapView ref="mapViewRef" :points="activePoints" :clusters="gis.clusters.value" :segments="activeSegments"
             :route-segments="gis.routeSegments.value" :selected-segment-id="gis.selectedSegmentId.value"
             :editing-segment-id="gis.editingSegmentId.value" :current-geometry="gis.currentGeometry.value"
             :map-type="mapType" :points-draggable="gis.pointsDraggable.value"
@@ -30,6 +30,10 @@
                     @update:model-value="gis.togglePointTypeVisible(key)" @click.stop />
                 <span class="legend-dot" :style="{ background: meta.color }" />
                 <span>{{ meta.label }}</span>
+            </div>
+            <div class="legend-row">
+                <span class="legend-cluster-dot" />
+                <span>Cụm điểm (gom theo lưới)</span>
             </div>
             <div v-if="gis.pointsDraggable.value" class="drag-hint">
                 <q-icon name="info" size="12px" /> Kéo marker để lưu vị trí mới
@@ -423,6 +427,15 @@ onBeforeUnmount(() => {
     width: 10px;
     height: 10px;
     border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.legend-cluster-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #0a84ff;
+    border: 2px solid rgba(10, 132, 255, .35);
     flex-shrink: 0;
 }
 
