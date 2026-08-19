@@ -15,23 +15,27 @@ export default defineConfig((/* ctx */) => {
     // app boot file (/src/boot)
     // --> boot files are part of "main.js"
     // https://v2.quasar.dev/quasar-cli-vite/boot-files
-    boot: ['keycloak'],
+    boot: ['keycloak', 'store'],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
     css: ['app.sass'],
 
     // https://github.com/quasarframework/quasar/tree/dev/extras
     extras: [
-      // 'ionicons-v4',
-      // 'mdi-v7',
-      // 'fontawesome-v6',
-      // 'eva-icons',
-      // 'themify',
-      // 'line-awesome',
-      // 'roboto-font-latin-ext', // this or either 'roboto-font', NEVER both!
-
+     
       'roboto-font', // optional, you are not bound to it
-      'material-icons', // optional, you are not bound to it
+      'material-icons',
+      'material-icons-outlined', // optional, you are not bound to its
+      'material-symbols-outlined',
+      'material-icons-round',
+      'fontawesome-v5',
+      'material-icons-sharp',
+      'themify',
+      'line-awesome',
+      'bootstrap-icons',
+      'eva-icons',
+      'ionicons-v4',
+      'mdi-v6'
     ],
 
     // Full list of options: https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#build
@@ -78,7 +82,14 @@ export default defineConfig((/* ctx */) => {
           ? [
               federation({
                 name: 'routing-app',
-                remotes: { appweb: remoteEntry },
+                remotes: {
+                  appweb: {
+                    external: `${remoteEntry}`,   // URL tới remoteEntry.js, ví dụ https://app.hitc.vn/app/remoteEntry.js
+                    externalType: 'url',
+                    format: 'var',                // <-- QUAN TRỌNG: remote là webpack global var, không phải ESM
+                    from: 'webpack'                // <-- báo cho plugin biết remote build bằng webpack MF
+                  }
+                },
                 shared: {
                   vue: { requiredVersion: false, singleton: true },
                   quasar: { requiredVersion: false, singleton: true }
@@ -101,6 +112,13 @@ export default defineConfig((/* ctx */) => {
       //   }
       // },
       open: true, // opens browser window automatically
+      proxy: {
+        '/app': {
+          target: 'https://app.hitc.vn',
+          changeOrigin: true,
+          secure: true
+        }
+  }
     },
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#framework

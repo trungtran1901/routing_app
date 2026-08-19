@@ -136,7 +136,7 @@ const pinInfo = ref(null)
 let lastBounds = null
 let lastZoom = null
 const addPointOpen = ref(false)
-const ADD_POINT_VIEW_NAME = 'hatang_quanlytuyen_newversion_detail_insert'
+const ADD_POINT_VIEW_NAME = 'hatang_quanlytuyen_newversion_detail_insert_maps'
 
 function openAddPoint() {
     addPointOpen.value = true
