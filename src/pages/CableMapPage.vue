@@ -173,11 +173,17 @@ function reloadMapData() {
     if (lastBounds) gis.loadViewport(lastBounds, lastZoom)
 }
 
-function onPointCreated() {
+function onPointCreated(record) {
     Notify.create({ type: 'positive', message: 'Đã thêm điểm mới trên bản đồ.' })
     clearPinInfo()
     mapViewRef.value?.clearPin()
-    reloadMapData()
+
+    const inserted = record ? gis.upsertPointOptimistic(record) : null
+    if (inserted) {
+        mapViewRef.value?.panToPoint(inserted)
+    } else {
+        reloadMapData()
+    }
 }
 const activePoints = computed(() => gis.routeMode.value ? gis.routeModePoints.value : gis.points.value)
 const activeSegments = computed(() => gis.routeMode.value ? gis.routeModeSegments.value : gis.segments.value)
@@ -261,7 +267,6 @@ async function onPointDragEnd({ point, lat, lng }) {
                 message: `Đã tự cập nhật ${result.refreshed_auto_segments.length} đoạn cáp AUTO liên quan.`
             })
         }
-        reloadMapData()
     } else if (gis.pointSaveError.value) {
         Notify.create({ type: 'negative', message: gis.pointSaveError.value })
     }

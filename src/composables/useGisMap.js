@@ -7,6 +7,11 @@ const SEARCH_DEBOUNCE_MS = 350
 const POINTS_LIMIT = 2000
 const SEGMENTS_LIMIT = 2000
 
+const SEGMENT_REFRESH_INITIAL_DELAY_MS = 500
+const SEGMENT_REFRESH_MAX_ATTEMPTS = 4
+const SEGMENT_REFRESH_BACKOFF_MS = 500
+const SEGMENT_ENDPOINT_TOLERANCE = 1e-6
+
 export function useGisMap() {
   const points = shallowRef(new Map())
   const clusters = shallowRef([])
@@ -43,6 +48,7 @@ export function useGisMap() {
   const pointsDraggable = ref(false)
   const savingPointId = ref(null)
   const pointSaveError = ref('')
+  const refreshingSegmentIds = shallowRef(new Set())
 
   const visiblePointTypes = reactive({ station: true, closure: true, customer: true, underground: true, other: true })
 
@@ -84,10 +90,6 @@ export function useGisMap() {
 
       if (myRequestId !== viewportRequestId) return
 
-      // API /map/points giờ trả về mảng hỗn hợp gồm:
-      // - { type: 'point', source_id, ma_diem, ten_diem, lat, lng, point_type, ma_tuyen, ... }
-      // - { type: 'cluster', count, lat, lng, bbox, ma_tuyen }  (gom cụm NxN theo viewport)
-      // Tách riêng 2 luồng để component bản đồ render khác nhau.
       const nextPoints = new Map()
       const nextClusters = []
       for (const item of pointsRes.data?.data || []) {
@@ -109,6 +111,39 @@ export function useGisMap() {
     } finally {
       if (myRequestId === viewportRequestId) loadingMap.value = false
     }
+  }
+
+  function normalizeNewPoint(raw) {
+    const sourceId = raw.source_id || raw.id || raw.ma_diem
+    if (!sourceId) return null
+    return {
+      source_id: sourceId,
+      ma_diem: raw.ma_diem || sourceId,
+      ten_diem: raw.ten_diem || raw.label || '',
+      lat: raw.lat ?? raw.vi_do ?? raw.geometry?.coordinates?.[1],
+      lng: raw.lng ?? raw.kinh_do ?? raw.geometry?.coordinates?.[0],
+      point_type: raw.point_type || raw.type || '',
+      ma_tuyen: raw.ma_tuyen || '',
+      ten_tuyen: raw.ten_tuyen || '',
+      parent_id: raw.parent_id || ''
+    }
+  }
+
+  function upsertPointOptimistic(raw) {
+    const point = normalizeNewPoint(raw)
+    if (!point || point.lat == null || point.lng == null) return null
+
+    const nextPoints = new Map(points.value)
+    nextPoints.set(point.source_id, point)
+    points.value = nextPoints
+
+    if (routeMode.value) {
+      const nextRoutePoints = new Map(routeModePoints.value)
+      nextRoutePoints.set(point.source_id, point)
+      routeModePoints.value = nextRoutePoints
+    }
+
+    return point
   }
 
   function clearSelection() {
@@ -241,6 +276,54 @@ export function useGisMap() {
     }
   }
 
+  function markSegmentRefreshing(segmentId, isRefreshing) {
+    const next = new Set(refreshingSegmentIds.value)
+    if (isRefreshing) next.add(segmentId)
+    else next.delete(segmentId)
+    refreshingSegmentIds.value = next
+  }
+
+  function endpointMatchesPoint(geometry, lat, lng) {
+    const coords = geometry?.coordinates
+    if (!Array.isArray(coords) || !coords.length) return false
+    const isNear = ([clng, clat]) =>
+      Math.abs(clat - lat) < SEGMENT_ENDPOINT_TOLERANCE && Math.abs(clng - lng) < SEGMENT_ENDPOINT_TOLERANCE
+    return isNear(coords[0]) || isNear(coords[coords.length - 1])
+  }
+
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  async function refreshSegmentUntilMoved(segmentId, expectedLat, expectedLng) {
+    markSegmentRefreshing(segmentId, true)
+    try {
+      await delay(SEGMENT_REFRESH_INITIAL_DELAY_MS)
+
+      for (let attempt = 0; attempt < SEGMENT_REFRESH_MAX_ATTEMPTS; attempt++) {
+        try {
+          const segRes = await gisAPI.getSegmentGeometry(segmentId)
+          const geomData = segRes.data?.data
+          if (geomData?.geometry) {
+            applySegmentGeometryUpdate(segmentId, geomData.geometry, geomData.geometry_version)
+            if (endpointMatchesPoint(geomData.geometry, expectedLat, expectedLng)) {
+              return true
+            }
+          }
+        } catch {
+          // ignore and retry
+        }
+
+        if (attempt < SEGMENT_REFRESH_MAX_ATTEMPTS - 1) {
+          await delay(SEGMENT_REFRESH_BACKOFF_MS * (attempt + 1))
+        }
+      }
+      return false
+    } finally {
+      markSegmentRefreshing(segmentId, false)
+    }
+  }
+
   async function updatePointGeometry(point, lat, lng) {
     const pointId = point.source_id
     savingPointId.value = pointId
@@ -255,17 +338,9 @@ export function useGisMap() {
       applyPointUpdate(data.point)
 
       const refreshedIds = data.refreshed_auto_segments || []
-      await Promise.all(refreshedIds.map(async id => {
-        try {
-          const segRes = await gisAPI.getSegmentGeometry(id)
-          const geomData = segRes.data?.data
-          if (geomData?.geometry) {
-            applySegmentGeometryUpdate(id, geomData.geometry, geomData.geometry_version)
-          }
-        } catch {
-          return
-        }
-      }))
+      refreshedIds.forEach(id => {
+        refreshSegmentUntilMoved(id, lat, lng)
+      })
 
       return data
     } catch (err) {
@@ -410,14 +485,14 @@ export function useGisMap() {
     selectedRouteId, routeSegments, loadingRoute, routeError,
     routeMode, routeModeLabel, routeModePoints, routeModeSegments, loadingRouteMode, routeModeError,
     editingSegmentId, originalGeometry, currentGeometry, isDirty, saving, saveError, conflict,
-    pointsDraggable, savingPointId, pointSaveError,
+    pointsDraggable, savingPointId, pointSaveError, refreshingSegmentIds,
     visiblePointTypes,
     searchQuery, searchResults, searchLoading, searchError,
     scheduleViewportLoad, loadViewport,
     clearSelection, selectPoint, selectSegment,
     loadRoute, clearRoute,
     enterRouteMode, exitRouteMode,
-    togglePointTypeVisible, setPointsDraggable, updatePointGeometry,
+    togglePointTypeVisible, setPointsDraggable, updatePointGeometry, upsertPointOptimistic,
     startEdit, updateCurrentGeometryFromPath, cancelEdit, saveEdit, reloadSegmentAfterConflict,
     scheduleSearch, clearSearch,
     dispose
