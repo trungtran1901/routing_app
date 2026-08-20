@@ -45,9 +45,13 @@
 
         <div v-if="routeLegend.length" class="gis-route-legend">
             <div class="legend-title">Tuyến trong khung nhìn ({{ routeLegend.length }})</div>
-            <div v-for="r in routeLegend" :key="r.maTuyen" class="legend-row">
+            <div v-for="r in routeLegend" :key="r.maTuyen" class="legend-row legend-row--toggle"
+                :class="{ 'legend-row--selected': gis.routeMode.value && gis.routeModeLabel.value === r.maTuyen }"
+                @click="onSelectRouteForAdd(r.maTuyen)">
                 <span class="legend-line" :style="{ background: r.color }" />
                 <span class="legend-route-label" :title="r.maTuyen">{{ r.maTuyen }}</span>
+                <q-icon v-if="gis.routeMode.value && gis.routeModeLabel.value === r.maTuyen" name="check_circle"
+                    size="14px" color="primary" class="q-ml-xs" />
             </div>
         </div>
 
@@ -98,11 +102,17 @@
                 <q-btn dense no-caps flat color="grey-4" icon="content_copy" label="Copy toạ độ"
                     @click="copyPinCoords" />
                 <q-btn dense no-caps flat color="grey-4" icon="center_focus_strong" label="Fit" @click="onFitPin" />
-                <q-btn dense no-caps color="primary" icon="add_location_alt" label="Thêm điểm" @click="openAddPoint" />
+                <q-btn dense no-caps color="primary" icon="add_location_alt" label="Thêm điểm"
+                    :disable="!gis.routeMode.value" @click="openAddPoint">
+                    <q-tooltip v-if="!gis.routeMode.value">
+                        Chọn một tuyến ở "Tuyến trong khung nhìn" trước khi thêm điểm
+                    </q-tooltip>
+                </q-btn>
             </q-card-section>
         </q-card>
         <RemoteAddPointDrawer v-if="pinInfo" v-model="addPointOpen" :view="ADD_POINT_VIEW_NAME" :lat="pinInfo.lat"
-            :lng="pinInfo.lng" :address="pinInfo.address" @created="onPointCreated" />
+            :lng="pinInfo.lng" :address="pinInfo.address" :ma-tuyen="gis.routeModeLabel.value"
+            :parent-id="selectedRouteParentId" @created="onPointCreated" />
         <q-banner v-if="gis.mapError.value" dense class="gis-error-banner bg-negative text-white">
             {{ gis.mapError.value }}
         </q-banner>
@@ -155,11 +165,19 @@ function resolveParentIdForRoute(maTuyen, segmentsMap, pointsMap) {
     }
     return null
 }
+function reloadMapData() {
+    if (gis.routeMode.value) {
+        enterRouteModeFromRoute()
+        return
+    }
+    if (lastBounds) gis.loadViewport(lastBounds, lastZoom)
+}
+
 function onPointCreated() {
     Notify.create({ type: 'positive', message: 'Đã thêm điểm mới trên bản đồ.' })
     clearPinInfo()
     mapViewRef.value?.clearPin()
-    if (lastBounds) gis.loadViewport(lastBounds, lastZoom)
+    reloadMapData()
 }
 const activePoints = computed(() => gis.routeMode.value ? gis.routeModePoints.value : gis.points.value)
 const activeSegments = computed(() => gis.routeMode.value ? gis.routeModeSegments.value : gis.segments.value)
@@ -168,7 +186,7 @@ const routeLegend = computed(() => {
     void routeColorVersion.value
 
     const activePointsMap = gis.routeMode.value ? gis.routeModePoints.value : gis.points.value
-    const seen = new Map() // maTuyen -> parentId
+    const seen = new Map()
 
     activeSegments.value.forEach(segment => {
         if (segment.ma_tuyen && !seen.has(segment.ma_tuyen)) {
@@ -183,9 +201,15 @@ const routeLegend = computed(() => {
             const color = parentId
                 ? getRouteColorByParentId(parentId, maTuyen)
                 : getRouteColor(maTuyen)
-            return { maTuyen, color }
+            return { maTuyen, color, parentId }
         })
         .sort((a, b) => a.maTuyen.localeCompare(b.maTuyen))
+})
+
+const selectedRouteParentId = computed(() => {
+    if (!gis.routeMode.value || !gis.routeModeLabel.value) return ''
+    const entry = routeLegend.value.find(r => r.maTuyen === gis.routeModeLabel.value)
+    return entry?.parentId || ''
 })
 
 function onMapReady(map) {
@@ -199,11 +223,7 @@ function onMapIdle({ bounds, zoom }) {
 }
 
 function onRefresh() {
-    if (gis.routeMode.value) {
-        enterRouteModeFromRoute()
-        return
-    }
-    if (lastBounds) gis.loadViewport(lastBounds, lastZoom)
+    reloadMapData()
 }
 
 function onMapTypeChange(type) {
@@ -241,6 +261,7 @@ async function onPointDragEnd({ point, lat, lng }) {
                 message: `Đã tự cập nhật ${result.refreshed_auto_segments.length} đoạn cáp AUTO liên quan.`
             })
         }
+        reloadMapData()
     } else if (gis.pointSaveError.value) {
         Notify.create({ type: 'negative', message: gis.pointSaveError.value })
     }
@@ -309,6 +330,12 @@ function onFitRoute() {
 function onExitRouteMode() {
     gis.exitRouteMode()
     router.push('/map')
+}
+
+function onSelectRouteForAdd(maTuyen) {
+    if (!maTuyen) return
+    if (gis.routeMode.value && gis.routeModeLabel.value === maTuyen) return
+    router.push(`/route/map/${encodeURIComponent(maTuyen)}`)
 }
 
 async function onViewRoute(routeId) {
@@ -460,6 +487,11 @@ onBeforeUnmount(() => {
 
 .legend-row--off {
     opacity: .4;
+}
+
+.legend-row--selected {
+    background: rgba(10, 132, 255, .12);
+    border-radius: 6px;
 }
 
 .legend-dot {

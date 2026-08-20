@@ -1,7 +1,7 @@
-<!-- src/components/gis/RemoteAddPointDrawer.vue -->
 <template>
     <component :is="RemoteComp" v-if="RemoteComp" :drawerRight="modelValue" :view="view" :data="prefillData"
-        :callback="callback" :widthScreen="40" @addSuccess="onAddSuccess" @drawerRightMenu="onDrawerToggle" />
+        :action="actionConfig" :callback="callback" :widthScreen="40" @addSuccess="onAddSuccess"
+        @drawerRightMenu="onDrawerToggle" />
 </template>
 
 <script setup>
@@ -12,13 +12,27 @@ const props = defineProps({
     view: { type: String, required: true },
     lat: { type: Number, required: true },
     lng: { type: Number, required: true },
-    address: { type: String, default: '' }
+    address: { type: String, default: '' },
+    maTuyen: { type: String, default: '' },
+    parentId: { type: String, default: '' }
 })
 const emit = defineEmits(['update:modelValue', 'created'])
 
 const RemoteComp = shallowRef(null)
 const remoteStore = shallowRef(null)
 const prefillData = ref({})
+
+const actionConfig = [
+    {
+        function_name: 'BindDataToField',
+        config_set: [
+            { field: 'vi_do', value: '@@selected_row[0].vi_do' },
+            { field: 'kinh_do', value: '@@selected_row[0].kinh_do' },
+            { field: 'ma_tuyen', value: '@@selected_row[0].ma_tuyen' },
+            { field: 'parent_id', value: '@@selected_row[0].parent_id' }
+        ]
+    }
+]
 
 let cachedStyleContent = null
 let injectedStyleNodes = []
@@ -89,16 +103,37 @@ watch(() => props.modelValue, async (open) => {
         prefillData.value = {
             lat: props.lat,
             lng: props.lng,
+            vi_do: props.lat,
+            kinh_do: props.lng,
+            ma_tuyen: props.maTuyen || '',
+            parent_id: props.parentId || '',
             geometry: { type: 'Point', coordinates: [props.lng, props.lat] },
             dia_chi: props.address || ''
         }
     } else {
         removeRemoteStyles()
+        RemoteComp.value = null
+        prefillData.value = {}
     }
 }, { immediate: true })
 
+watch(() => props.maTuyen, val => {
+    if (props.modelValue) {
+        prefillData.value = { ...prefillData.value, ma_tuyen: val || '' }
+    }
+})
+
+watch(() => props.parentId, val => {
+    if (props.modelValue) {
+        prefillData.value = { ...prefillData.value, parent_id: val || '' }
+    }
+})
+
 onBeforeUnmount(() => {
     removeRemoteStyles()
+    RemoteComp.value = null
+    remoteStore.value = null
+    prefillData.value = {}
 })
 
 function onDrawerToggle(val) {
