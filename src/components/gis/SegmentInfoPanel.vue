@@ -14,6 +14,8 @@
                 <div><b>Tuyến:</b> {{ detail.segment.ma_tuyen }}</div>
                 <div><b>Điểm đầu:</b> {{ detail.start_point?.ten_diem || detail.segment.start_point_id }}</div>
                 <div><b>Điểm cuối:</b> {{ detail.end_point?.ten_diem || detail.segment.end_point_id }}</div>
+                <div v-if="detail.segment.length_m != null"><b>Chiều dài:</b> {{ formatLength(detail.segment.length_m)
+                    }}</div>
                 <div><b>Nguồn geometry:</b> {{ detail.segment.geometry_source }}</div>
                 <div><b>Version:</b> {{ detail.segment.geometry_version }}</div>
             </q-card-section>
@@ -23,7 +25,7 @@
                     <q-icon name="cable" size="14px" color="amber" />
                     <span class="text-caption text-weight-bold">SID trên đoạn này</span>
                     <q-badge color="amber-9" text-color="dark">{{ detail.sid_count ?? (detail.sid_list || []).length
-                        }}</q-badge>
+                    }}</q-badge>
                 </div>
                 <div v-if="!detail.sid_list || !detail.sid_list.length" class="text-caption text-grey-6">
                     Không có SID nào đang hoạt động trên đoạn này.
@@ -71,6 +73,8 @@
 </template>
 
 <script setup>
+import { formatLength } from '../../utils/geo'
+
 defineProps({
     detail: { type: Object, default: null },
     loading: { type: Boolean, default: false },

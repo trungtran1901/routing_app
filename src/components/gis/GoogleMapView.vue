@@ -10,7 +10,7 @@
 <script setup>
 import { ref, shallowRef, onMounted, onBeforeUnmount, watch, markRaw } from 'vue'
 import { loadGoogleMaps } from '../../utils/googleMapsLoader'
-import { coordsToPath, bboxToBounds } from '../../utils/geo'
+import { coordsToPath, bboxToBounds, formatLength } from '../../utils/geo'
 import { buildPointIcon, normalizePointType, pointTypeMeta } from '../../utils/pointTypes'
 import { getRouteColor, getRouteColorByParentId, ensureRouteColorByParentId, hasRouteColorCached } from '../../utils/routeColors'
 
@@ -45,25 +45,21 @@ let geocoder = null
 const pointMarkers = new Map()
 const clusterMarkers = new Map()
 const segmentPolylines = new Map()
+const segmentLabels = new Map()
 const routePolylines = []
 const pinMarker = shallowRef(null)
 let editingPolyline = null
 let editListeners = []
 let idleListener = null
 
-// Fallback: khi segment không tự mang parent_id, suy ra từ điểm cùng ma_tuyen
-// đã từng thấy parent_id (điểm luôn có parent_id theo response /map/points).
-const pointParentIdByRoute = new Map() // ma_tuyen -> parent_id
-
-// Theo dõi segment nào thuộc parent_id nào, để khi màu của 1 route resolve
-// xong ta chỉ cập nhật ĐÚNG các polyline liên quan — không repaint toàn bộ,
-// tránh việc gọi lại syncSegments() gây vòng lặp.
-const segmentsByParentId = new Map() // parentId -> Set(segmentId)
+const pointParentIdByRoute = new Map()
+const segmentsByParentId = new Map()
 
 const SEGMENT_COLOR_SELECTED = '#facc15'
 const EDIT_COLOR = '#ef4444'
 const HIT_STROKE_WEIGHT = 18
 const LABEL_ZOOM_MIN = 10
+const LENGTH_LABEL_ZOOM_MIN = 15
 
 onMounted(async () => {
     try {
@@ -97,7 +93,10 @@ onMounted(async () => {
         emit('idle', { bounds: map.getBounds(), zoom: map.getZoom() })
     })
 
-    map.addListener('zoom_changed', () => applyLabelVisibility())
+    map.addListener('zoom_changed', () => {
+        applyLabelVisibility()
+        applySegmentLabelVisibility()
+    })
 
     ready.value = true
     emit('ready', map)
@@ -120,6 +119,8 @@ function clearAllOverlays() {
     clusterMarkers.clear()
     segmentPolylines.forEach(pair => { pair.hit.setMap(null); pair.visible.setMap(null) })
     segmentPolylines.clear()
+    segmentLabels.forEach(marker => marker.setMap(null))
+    segmentLabels.clear()
     segmentsByParentId.clear()
     routePolylines.forEach(p => p.setMap(null))
     routePolylines.length = 0
@@ -165,14 +166,20 @@ function applyLabelVisibility() {
     })
 }
 
+function applySegmentLabelVisibility() {
+    if (!map) return
+    const show = map.getZoom() >= LENGTH_LABEL_ZOOM_MIN
+    segmentLabels.forEach(marker => {
+        marker.setMap(show ? map : null)
+    })
+}
+
 function syncPoints(pointsMap) {
     if (!map) return
     const seen = new Set()
     pointsMap.forEach((point, id) => {
         seen.add(id)
 
-        // Ghi nhớ parent_id theo ma_tuyen để làm fallback màu cho segment
-        // không tự mang parent_id (xem resolveSegmentParentId()).
         if (point.ma_tuyen && point.parent_id) {
             pointParentIdByRoute.set(point.ma_tuyen, point.parent_id)
         }
@@ -214,7 +221,6 @@ function syncPoints(pointsMap) {
     applyLabelVisibility()
 }
 
-// ── Cluster rendering ──────────────────────
 function clusterKey(c) {
     return `${c.ma_tuyen || ''}:${c.lat.toFixed(5)}:${c.lng.toFixed(5)}:${c.count}`
 }
@@ -287,16 +293,10 @@ function syncClusters(list) {
     })
 }
 
-// ── Route color (từ API theo parent_id, có cache + dedupe request) ──────
 function resolveSegmentParentId(segment) {
     return segment.parent_id || pointParentIdByRoute.get(segment.ma_tuyen) || null
 }
 
-/**
- * Chỉ gọi API khi parentId CHƯA có trong cache. Khi màu về, KHÔNG gọi lại
- * syncSegments() toàn bộ — chỉ cập nhật đúng những polyline đã biết thuộc
- * parentId đó, để tránh vòng lặp (segmentColor -> fetch -> repaint -> ...).
- */
 function ensureRouteColorAndRepaintTargeted(parentId) {
     if (!parentId || hasRouteColorCached(parentId)) return
     ensureRouteColorByParentId(parentId).then(color => {
@@ -328,14 +328,86 @@ function segmentWeight(id) {
     return id === props.selectedSegmentId ? 5 : 3
 }
 
-// ── Segments: toàn bộ vẽ NÉT LIỀN, chỉ khác nhau về màu theo tuyến ───────
+function buildInvisibleIcon() {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>`
+    return {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+        scaledSize: new googleMaps.Size(1, 1),
+        anchor: new googleMaps.Point(0, 0)
+    }
+}
+
+function getPathMidpoint(path) {
+    if (!path.length) return null
+    if (path.length === 1) return path[0]
+    const geomLib = googleMaps.geometry.spherical
+    const dists = []
+    let total = 0
+    for (let i = 0; i < path.length - 1; i++) {
+        const d = geomLib.computeDistanceBetween(path[i], path[i + 1])
+        dists.push(d)
+        total += d
+    }
+    const half = total / 2
+    let acc = 0
+    for (let i = 0; i < dists.length; i++) {
+        if (acc + dists[i] >= half) {
+            const remain = half - acc
+            const fraction = dists[i] === 0 ? 0 : remain / dists[i]
+            return geomLib.interpolate(path[i], path[i + 1], fraction)
+        }
+        acc += dists[i]
+    }
+    return path[path.length - 1]
+}
+
+function buildLengthLabelConfig(text) {
+    return {
+        text,
+        color: '#e2e8f0',
+        fontSize: '11px',
+        fontWeight: '600',
+        className: 'gis-segment-length-label'
+    }
+}
+
+function upsertSegmentLabel(id, path, lengthM) {
+    if (lengthM == null || path.length < 2) {
+        const existing = segmentLabels.get(id)
+        if (existing) { existing.setMap(null); segmentLabels.delete(id) }
+        return
+    }
+    const midpoint = getPathMidpoint(path)
+    const text = formatLength(lengthM)
+    let labelMarker = segmentLabels.get(id)
+    if (!labelMarker) {
+        labelMarker = new googleMaps.Marker({
+            position: midpoint,
+            map,
+            icon: buildInvisibleIcon(),
+            clickable: false,
+            zIndex: 7,
+            label: buildLengthLabelConfig(text)
+        })
+        segmentLabels.set(id, labelMarker)
+    } else {
+        labelMarker.setPosition(midpoint)
+        labelMarker.setLabel(buildLengthLabelConfig(text))
+        labelMarker.setMap(map)
+    }
+}
+
 function syncSegments(segmentsMap) {
     if (!map) return
 
     const seen = new Set()
     segmentsMap.forEach((segment, id) => {
         seen.add(id)
-        if (id === props.editingSegmentId) return
+        if (id === props.editingSegmentId) {
+            const oldLabel = segmentLabels.get(id)
+            if (oldLabel) { oldLabel.setMap(null); segmentLabels.delete(id) }
+            return
+        }
 
         let pair = segmentPolylines.get(id)
         const path = coordsToPath(segment.geometry?.coordinates)
@@ -371,6 +443,8 @@ function syncSegments(segmentsMap) {
             pair.visible.setMap(map)
             pair.visible.setOptions({ strokeColor: color, strokeOpacity: 1, strokeWeight: weight })
         }
+
+        upsertSegmentLabel(id, path, segment.length_m)
     })
     segmentPolylines.forEach((pair, id) => {
         if (!seen.has(id)) {
@@ -380,6 +454,14 @@ function syncSegments(segmentsMap) {
             segmentsByParentId.forEach(set => set.delete(id))
         }
     })
+    segmentLabels.forEach((marker, id) => {
+        if (!seen.has(id)) {
+            marker.setMap(null)
+            segmentLabels.delete(id)
+        }
+    })
+
+    applySegmentLabelVisibility()
 }
 
 function syncRoute(list) {
@@ -393,7 +475,7 @@ function syncRoute(list) {
             ? getRouteColorByParentId(parentId, segment.ma_tuyen)
             : getRouteColor(segment.ma_tuyen)
         if (parentId && !hasRouteColorCached(parentId)) {
-            ensureRouteColorByParentId(parentId) // fetch để cache sẵn cho lần sau
+            ensureRouteColorByParentId(parentId)
         }
         const polyline = new googleMaps.Polyline({
             path, map,
@@ -447,6 +529,8 @@ function startEditingOverlay(geometry) {
         staticPair.hit.setMap(null)
         staticPair.visible.setMap(null)
     }
+    const staticLabel = segmentLabels.get(props.editingSegmentId)
+    if (staticLabel) staticLabel.setMap(null)
 
     const path = coordsToPath(geometry?.coordinates)
     editingPolyline = new googleMaps.Polyline({
@@ -485,6 +569,8 @@ function stopEditingOverlay(segmentId) {
             staticPair.hit.setMap(map)
             staticPair.visible.setMap(map)
         }
+        const staticLabel = segmentLabels.get(restoreId)
+        if (staticLabel) staticLabel.setMap(map)
     }
 }
 
@@ -619,5 +705,15 @@ defineExpose({ fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentDat
         -1px 1px 1px rgba(255, 255, 255, 0.95),
         1px 1px 1px rgba(255, 255, 255, 0.95),
         0 0 3px rgba(255, 255, 255, 0.9);
+}
+
+.gis-segment-length-label {
+    font-family: Roboto, Arial, sans-serif;
+    font-weight: 600;
+    pointer-events: none;
+    padding: 1px 5px;
+    background: rgba(15, 23, 42, 0.75);
+    border-radius: 4px;
+    white-space: nowrap;
 }
 </style>

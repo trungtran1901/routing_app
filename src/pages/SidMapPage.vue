@@ -53,6 +53,8 @@
                 <div><b>Tuyến:</b> {{ selectedEdge.ten_tuyen || selectedEdge.ma_tuyen }}</div>
                 <div><b>Từ:</b> {{ selectedEdge.from }}</div>
                 <div><b>Đến:</b> {{ selectedEdge.to }}</div>
+                <div v-if="selectedEdge.length_m != null"><b>Chiều dài:</b> {{ formatLength(selectedEdge.length_m) }}
+                </div>
                 <div><b>Nguồn geometry:</b> {{ selectedEdge.geometry_source || 'REAL' }}</div>
             </q-card-section>
             <q-card-section class="q-pt-none">
@@ -93,6 +95,7 @@ import { useRoute, useRouter } from 'vue-router'
 import GoogleMapView from '../components/gis/GoogleMapView.vue'
 import gisAPI from '../services/gis'
 import { getRouteColor } from '../utils/routeColors'
+import { formatLength } from '../utils/geo'
 
 const route = useRoute()
 const router = useRouter()
@@ -187,7 +190,8 @@ async function load() {
                 end_point_id: e.to,
                 ma_tuyen: e.ma_tuyen,
                 geometry: e.geometry,
-                geometry_source: e.geometry_source
+                geometry_source: e.geometry_source,
+                length_m: e.length_m
             })
             getRouteColor(e.ma_tuyen)
         }
