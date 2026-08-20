@@ -123,7 +123,12 @@ import PlaceSearchBox from '../components/gis/PlaceSearchBox.vue'
 import SegmentInfoPanel from '../components/gis/SegmentInfoPanel.vue'
 import { useGisMap } from '../composables/useGisMap'
 import { POINT_TYPE_META } from '../utils/pointTypes'
-import { getRouteColor } from '../utils/routeColors'
+import {
+    getRouteColor,
+    getRouteColorByParentId,
+    ensureRouteColorByParentId,
+    routeColorVersion
+} from '../utils/routeColors.js'
 import RemoteAddPointDrawer from '../components/gis/RemoteAddPointDrawer.vue'
 const route = useRoute()
 const router = useRouter()
@@ -141,7 +146,15 @@ const ADD_POINT_VIEW_NAME = 'hatang_quanlytuyen_newversion_detail_insert_maps'
 function openAddPoint() {
     addPointOpen.value = true
 }
-
+function resolveParentIdForRoute(maTuyen, segmentsMap, pointsMap) {
+    for (const segment of segmentsMap.values()) {
+        if (segment.ma_tuyen === maTuyen && segment.parent_id) return segment.parent_id
+    }
+    for (const point of pointsMap.values()) {
+        if (point.ma_tuyen === maTuyen && point.parent_id) return point.parent_id
+    }
+    return null
+}
 function onPointCreated() {
     Notify.create({ type: 'positive', message: 'Đã thêm điểm mới trên bản đồ.' })
     clearPinInfo()
@@ -152,14 +165,26 @@ const activePoints = computed(() => gis.routeMode.value ? gis.routeModePoints.va
 const activeSegments = computed(() => gis.routeMode.value ? gis.routeModeSegments.value : gis.segments.value)
 
 const routeLegend = computed(() => {
-    const seen = new Map()
+    void routeColorVersion.value
+
+    const activePointsMap = gis.routeMode.value ? gis.routeModePoints.value : gis.points.value
+    const seen = new Map() // maTuyen -> parentId
+
     activeSegments.value.forEach(segment => {
         if (segment.ma_tuyen && !seen.has(segment.ma_tuyen)) {
-            seen.set(segment.ma_tuyen, getRouteColor(segment.ma_tuyen))
+            const parentId = resolveParentIdForRoute(segment.ma_tuyen, activeSegments.value, activePointsMap)
+            seen.set(segment.ma_tuyen, parentId)
         }
     })
+
     return [...seen.entries()]
-        .map(([maTuyen, color]) => ({ maTuyen, color }))
+        .map(([maTuyen, parentId]) => {
+            if (parentId) ensureRouteColorByParentId(parentId)
+            const color = parentId
+                ? getRouteColorByParentId(parentId, maTuyen)
+                : getRouteColor(maTuyen)
+            return { maTuyen, color }
+        })
         .sort((a, b) => a.maTuyen.localeCompare(b.maTuyen))
 })
 

@@ -3,12 +3,11 @@ export const POINT_TYPE_META = {
     label: 'Trạm',
     color: '#f59e0b',
     size: 30,
+    // icon nhà (house) — trực quan hơn hình vuông chấm 4 ô cũ
     svg: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
-      <rect x="3" y="3" width="24" height="24" rx="6" fill="#f59e0b" stroke="#0f172a" stroke-width="2"/>
-      <rect x="9" y="9" width="4" height="4" fill="#0f172a"/>
-      <rect x="17" y="9" width="4" height="4" fill="#0f172a"/>
-      <rect x="9" y="16" width="4" height="4" fill="#0f172a"/>
-      <rect x="17" y="16" width="4" height="4" fill="#0f172a"/>
+      <circle cx="15" cy="15" r="14" fill="#f59e0b" stroke="#0f172a" stroke-width="1.5"/>
+      <path d="M15 6 L24 13.5 V24 H19 V17 H11 V24 H6 V13.5 Z"
+            fill="#0f172a"/>
     </svg>`
   },
   closure: {
@@ -34,6 +33,18 @@ export const POINT_TYPE_META = {
       <path d="M6 18c0-3.3 2.7-5 6-5s6 1.7 6 5" fill="none" stroke="#0f172a" stroke-width="2" stroke-linecap="round"/>
     </svg>`
   },
+  // MỚI: điểm hạ ngầm — biểu tượng nắp hố ga / mũi tên xuống đất
+  underground: {
+    label: 'Hạ ngầm',
+    color: '#a16207',
+    size: 26,
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">
+      <circle cx="13" cy="13" r="11" fill="#a16207" stroke="#0f172a" stroke-width="2"/>
+      <ellipse cx="13" cy="10" rx="6" ry="2.4" fill="none" stroke="#fde68a" stroke-width="1.6"/>
+      <path d="M13 9 V19 M9.5 15.5 L13 19 L16.5 15.5"
+            fill="none" stroke="#fde68a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`
+  },
   other: {
     label: 'Khác',
     color: '#60a5fa',
@@ -47,7 +58,8 @@ export const POINT_TYPE_META = {
 const LABEL_TO_KEY = {
   'Trạm': 'station',
   'Măng xông': 'closure',
-  'Khách hàng': 'customer'
+  'Khách hàng': 'customer',
+  'Hạ ngầm': 'underground'   // MỚI
 }
 
 export function normalizePointType(pointType) {
@@ -57,6 +69,7 @@ export function normalizePointType(pointType) {
 export function pointTypeMeta(pointType) {
   return POINT_TYPE_META[normalizePointType(pointType)]
 }
+
 
 const iconCache = new Map()
 

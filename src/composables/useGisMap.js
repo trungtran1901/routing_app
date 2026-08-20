@@ -44,7 +44,7 @@ export function useGisMap() {
   const savingPointId = ref(null)
   const pointSaveError = ref('')
 
-  const visiblePointTypes = reactive({ station: true, closure: true, customer: true, other: true })
+  const visiblePointTypes = reactive({ station: true, closure: true, customer: true, underground: true, other: true })
 
   const searchQuery = ref('')
   const searchResults = ref([])

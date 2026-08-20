@@ -12,7 +12,7 @@ import { ref, shallowRef, onMounted, onBeforeUnmount, watch, markRaw } from 'vue
 import { loadGoogleMaps } from '../../utils/googleMapsLoader'
 import { coordsToPath, bboxToBounds } from '../../utils/geo'
 import { buildPointIcon, normalizePointType, pointTypeMeta } from '../../utils/pointTypes'
-import { getRouteColor } from '../../utils/routeColors'
+import { getRouteColor, getRouteColorByParentId, ensureRouteColorByParentId, hasRouteColorCached } from '../../utils/routeColors'
 
 const props = defineProps({
     points: { type: Map, required: true },
@@ -28,7 +28,7 @@ const props = defineProps({
     pointsDraggable: { type: Boolean, default: false },
     visiblePointTypes: {
         type: Object,
-        default: () => ({ station: true, closure: true, customer: true, other: true })
+        default: () => ({ station: true, closure: true, customer: true, underground: true, other: true })
     }
 })
 
@@ -50,6 +50,15 @@ const pinMarker = shallowRef(null)
 let editingPolyline = null
 let editListeners = []
 let idleListener = null
+
+// Fallback: khi segment không tự mang parent_id, suy ra từ điểm cùng ma_tuyen
+// đã từng thấy parent_id (điểm luôn có parent_id theo response /map/points).
+const pointParentIdByRoute = new Map() // ma_tuyen -> parent_id
+
+// Theo dõi segment nào thuộc parent_id nào, để khi màu của 1 route resolve
+// xong ta chỉ cập nhật ĐÚNG các polyline liên quan — không repaint toàn bộ,
+// tránh việc gọi lại syncSegments() gây vòng lặp.
+const segmentsByParentId = new Map() // parentId -> Set(segmentId)
 
 const SEGMENT_COLOR_SELECTED = '#facc15'
 const EDIT_COLOR = '#ef4444'
@@ -111,6 +120,7 @@ function clearAllOverlays() {
     clusterMarkers.clear()
     segmentPolylines.forEach(pair => { pair.hit.setMap(null); pair.visible.setMap(null) })
     segmentPolylines.clear()
+    segmentsByParentId.clear()
     routePolylines.forEach(p => p.setMap(null))
     routePolylines.length = 0
     clearPin()
@@ -160,6 +170,13 @@ function syncPoints(pointsMap) {
     const seen = new Set()
     pointsMap.forEach((point, id) => {
         seen.add(id)
+
+        // Ghi nhớ parent_id theo ma_tuyen để làm fallback màu cho segment
+        // không tự mang parent_id (xem resolveSegmentParentId()).
+        if (point.ma_tuyen && point.parent_id) {
+            pointParentIdByRoute.set(point.ma_tuyen, point.parent_id)
+        }
+
         let entry = pointMarkers.get(id)
         const position = { lat: point.lat, lng: point.lng }
         const visible = isPointTypeVisible(point.point_type)
@@ -198,10 +215,6 @@ function syncPoints(pointsMap) {
 }
 
 // ── Cluster rendering ──────────────────────
-// Backend gom cụm điểm theo lưới NxN dựa trên viewport hiện tại và trả về
-// { type: 'cluster', count, lat, lng, bbox, ma_tuyen } thay vì hàng nghìn
-// point riêng lẻ. Cluster không có id ổn định từ server nên ta tự tạo key
-// từ vị trí + số lượng để diff giữa các lần render.
 function clusterKey(c) {
     return `${c.ma_tuyen || ''}:${c.lat.toFixed(5)}:${c.lng.toFixed(5)}:${c.count}`
 }
@@ -274,16 +287,51 @@ function syncClusters(list) {
     })
 }
 
+// ── Route color (từ API theo parent_id, có cache + dedupe request) ──────
+function resolveSegmentParentId(segment) {
+    return segment.parent_id || pointParentIdByRoute.get(segment.ma_tuyen) || null
+}
+
+/**
+ * Chỉ gọi API khi parentId CHƯA có trong cache. Khi màu về, KHÔNG gọi lại
+ * syncSegments() toàn bộ — chỉ cập nhật đúng những polyline đã biết thuộc
+ * parentId đó, để tránh vòng lặp (segmentColor -> fetch -> repaint -> ...).
+ */
+function ensureRouteColorAndRepaintTargeted(parentId) {
+    if (!parentId || hasRouteColorCached(parentId)) return
+    ensureRouteColorByParentId(parentId).then(color => {
+        const segIds = segmentsByParentId.get(parentId)
+        if (!segIds) return
+        segIds.forEach(segId => {
+            const pair = segmentPolylines.get(segId)
+            if (!pair || segId === props.selectedSegmentId) return
+            pair.visible.setOptions({ strokeColor: color })
+        })
+    })
+}
+
 function segmentColor(segment, id) {
     if (id === props.selectedSegmentId) return SEGMENT_COLOR_SELECTED
-    return getRouteColor(segment.ma_tuyen)
+    const parentId = resolveSegmentParentId(segment)
+    if (parentId) {
+        if (!segmentsByParentId.has(parentId)) segmentsByParentId.set(parentId, new Set())
+        segmentsByParentId.get(parentId).add(id)
+    }
+    const color = parentId
+        ? getRouteColorByParentId(parentId, segment.ma_tuyen)
+        : getRouteColor(segment.ma_tuyen)
+    ensureRouteColorAndRepaintTargeted(parentId)
+    return color
 }
+
 function segmentWeight(id) {
     return id === props.selectedSegmentId ? 5 : 3
 }
 
+// ── Segments: toàn bộ vẽ NÉT LIỀN, chỉ khác nhau về màu theo tuyến ───────
 function syncSegments(segmentsMap) {
     if (!map) return
+
     const seen = new Set()
     segmentsMap.forEach((segment, id) => {
         seen.add(id)
@@ -293,6 +341,7 @@ function syncSegments(segmentsMap) {
         const path = coordsToPath(segment.geometry?.coordinates)
         const color = segmentColor(segment, id)
         const weight = segmentWeight(id)
+
         if (!pair) {
             const hit = new googleMaps.Polyline({
                 path, map,
@@ -305,8 +354,8 @@ function syncSegments(segmentsMap) {
             const visible = new googleMaps.Polyline({
                 path, map,
                 strokeColor: color,
-                strokeWeight: weight,
                 strokeOpacity: 1,
+                strokeWeight: weight,
                 clickable: false,
                 zIndex: 6
             })
@@ -320,7 +369,7 @@ function syncSegments(segmentsMap) {
             pair.hit.setMap(map)
             pair.visible.setPath(path)
             pair.visible.setMap(map)
-            pair.visible.setOptions({ strokeColor: color, strokeWeight: weight })
+            pair.visible.setOptions({ strokeColor: color, strokeOpacity: 1, strokeWeight: weight })
         }
     })
     segmentPolylines.forEach((pair, id) => {
@@ -328,6 +377,7 @@ function syncSegments(segmentsMap) {
             pair.hit.setMap(null)
             pair.visible.setMap(null)
             segmentPolylines.delete(id)
+            segmentsByParentId.forEach(set => set.delete(id))
         }
     })
 }
@@ -338,9 +388,16 @@ function syncRoute(list) {
     if (!map || !list?.length) return
     list.forEach(segment => {
         const path = coordsToPath(segment.geometry?.coordinates)
+        const parentId = resolveSegmentParentId(segment)
+        const color = parentId
+            ? getRouteColorByParentId(parentId, segment.ma_tuyen)
+            : getRouteColor(segment.ma_tuyen)
+        if (parentId && !hasRouteColorCached(parentId)) {
+            ensureRouteColorByParentId(parentId) // fetch để cache sẵn cho lần sau
+        }
         const polyline = new googleMaps.Polyline({
             path, map,
-            strokeColor: getRouteColor(segment.ma_tuyen),
+            strokeColor: color,
             strokeWeight: 7,
             strokeOpacity: 0.95,
             zIndex: 5
