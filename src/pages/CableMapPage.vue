@@ -153,6 +153,8 @@ let lastZoom = null
 const addPointOpen = ref(false)
 const ADD_POINT_VIEW_NAME = 'hatang_quanlytuyen_newversion_detail_insert_maps'
 
+let reconcileTimer = null
+
 function openAddPoint() {
     addPointOpen.value = true
 }
@@ -173,6 +175,18 @@ function reloadMapData() {
     if (lastBounds) gis.loadViewport(lastBounds, lastZoom)
 }
 
+function scheduleReconcile(delayMs = 800) {
+    if (reconcileTimer) clearTimeout(reconcileTimer)
+    reconcileTimer = setTimeout(() => {
+        reconcileTimer = null
+        reloadMapData()
+    }, delayMs)
+}
+
+watch(() => gis.staleSegmentsDetected.value, (val) => {
+    if (val) scheduleReconcile(300)
+})
+
 function onPointCreated(record) {
     Notify.create({ type: 'positive', message: 'Đã thêm điểm mới trên bản đồ.' })
     clearPinInfo()
@@ -181,9 +195,9 @@ function onPointCreated(record) {
     const inserted = record ? gis.upsertPointOptimistic(record) : null
     if (inserted) {
         mapViewRef.value?.panToPoint(inserted)
-    } else {
-        reloadMapData()
     }
+
+    scheduleReconcile(600)
 }
 const activePoints = computed(() => gis.routeMode.value ? gis.routeModePoints.value : gis.points.value)
 const activeSegments = computed(() => gis.routeMode.value ? gis.routeModeSegments.value : gis.segments.value)
@@ -396,6 +410,7 @@ watch(() => route.params.maTuyen, (val) => {
 }, { immediate: true })
 
 onBeforeUnmount(() => {
+    if (reconcileTimer) clearTimeout(reconcileTimer)
     gis.dispose()
 })
 </script>

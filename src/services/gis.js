@@ -36,6 +36,9 @@ export const gisAPI = {
   search(q, limit, signal, type) {
     return apiClient.get(`${BASE}/search`, { params: { q, limit, type }, signal })
   },
+  measure(points, signal) {
+    return apiClient.post(`${BASE}/measure`, { points }, { signal })
+  },
   sync() {
     return apiClient.post(`${BASE}/sync`)
   }

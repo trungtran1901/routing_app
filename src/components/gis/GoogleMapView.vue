@@ -26,6 +26,8 @@ const props = defineProps({
     center: { type: Object, default: () => ({ lat: 21.0278, lng: 105.8342 }) },
     zoom: { type: Number, default: 14 },
     pointsDraggable: { type: Boolean, default: false },
+    measureMode: { type: Boolean, default: false },
+    measureResult: { type: Object, default: null },
     visiblePointTypes: {
         type: Object,
         default: () => ({ station: true, closure: true, customer: true, underground: true, other: true })
@@ -33,7 +35,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
-    'ready', 'idle', 'point-click', 'segment-click', 'background-click', 'geometry-changed', 'point-dragend', 'pin-change', 'cluster-click'
+    'ready', 'idle', 'point-click', 'segment-click', 'background-click', 'geometry-changed', 'point-dragend', 'pin-change', 'cluster-click', 'measure-points-changed'
 ])
 
 const mapEl = ref(null)
@@ -61,6 +63,14 @@ const HIT_STROKE_WEIGHT = 18
 const LABEL_ZOOM_MIN = 10
 const LENGTH_LABEL_ZOOM_MIN = 15
 
+const MEASURE_LINE_COLOR = '#f59e0b'
+
+const measurePoints = ref([])
+let measureMarkers = []
+let measurePolyline = null
+let measureLabelMarkers = []
+let measureTotalMarker = null
+
 onMounted(async () => {
     try {
         googleMaps = markRaw(await loadGoogleMaps())
@@ -84,8 +94,12 @@ onMounted(async () => {
     geocoder = markRaw(new googleMaps.Geocoder())
 
     map.addListener('click', e => {
-        emit('background-click')
         if (!e.latLng) return
+        if (props.measureMode) {
+            addMeasurePoint(e.latLng.lat(), e.latLng.lng())
+            return
+        }
+        emit('background-click')
         dropPin(e.latLng.lat(), e.latLng.lng())
     })
 
@@ -125,6 +139,7 @@ function clearAllOverlays() {
     routePolylines.forEach(p => p.setMap(null))
     routePolylines.length = 0
     clearPin()
+    clearMeasure()
     stopEditingOverlay()
 }
 
@@ -361,15 +376,15 @@ function getPathMidpoint(path) {
     return path[path.length - 1]
 }
 
-function buildLengthLabelConfig(text) {
-    return {
-        text,
-        color: '#e2e8f0',
-        fontSize: '11px',
-        fontWeight: '600',
-        className: 'gis-segment-length-label'
-    }
-}
+// function buildLengthLabelConfig(text) {
+//     return {
+//         text,
+//         color: '#e2e8f0',
+//         fontSize: '11px',
+//         fontWeight: '600',
+//         className: 'gis-segment-length-label'
+//     }
+// }
 
 function upsertSegmentLabel(id, path, lengthM) {
     if (lengthM == null || path.length < 2) {
@@ -378,7 +393,7 @@ function upsertSegmentLabel(id, path, lengthM) {
         return
     }
     const midpoint = getPathMidpoint(path)
-    const text = formatLength(lengthM)
+    // const text = formatLength(lengthM)
     let labelMarker = segmentLabels.get(id)
     if (!labelMarker) {
         labelMarker = new googleMaps.Marker({
@@ -387,12 +402,12 @@ function upsertSegmentLabel(id, path, lengthM) {
             icon: buildInvisibleIcon(),
             clickable: false,
             zIndex: 7,
-            label: buildLengthLabelConfig(text)
+            //label: buildLengthLabelConfig(text)
         })
         segmentLabels.set(id, labelMarker)
     } else {
         labelMarker.setPosition(midpoint)
-        labelMarker.setLabel(buildLengthLabelConfig(text))
+        // labelMarker.setLabel(buildLengthLabelConfig(text))
         labelMarker.setMap(map)
     }
 }
@@ -647,6 +662,146 @@ function panAndPin(lat, lng, address, zoomTo = 17) {
     emit('pin-change', { lat, lng, address: address || null })
 }
 
+function buildMeasurePointIcon() {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">
+      <circle cx="7" cy="7" r="6" fill="#f59e0b" stroke="#0f172a" stroke-width="2"/>
+    </svg>`
+    return {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+        scaledSize: new googleMaps.Size(14, 14),
+        anchor: new googleMaps.Point(7, 7)
+    }
+}
+
+function clearMeasureMarkers() {
+    measureMarkers.forEach(m => m.setMap(null))
+    measureMarkers = []
+}
+
+function clearMeasureLabels() {
+    measureLabelMarkers.forEach(m => m.setMap(null))
+    measureLabelMarkers = []
+    if (measureTotalMarker) {
+        measureTotalMarker.setMap(null)
+        measureTotalMarker = null
+    }
+}
+
+function renderMeasurePoints() {
+    if (!map) return
+    clearMeasureMarkers()
+
+    measurePoints.value.forEach(p => {
+        const marker = new googleMaps.Marker({
+            position: { lat: p.lat, lng: p.lng },
+            map,
+            icon: buildMeasurePointIcon(),
+            zIndex: 55,
+            clickable: false
+        })
+        measureMarkers.push(marker)
+    })
+
+    const path = measurePoints.value.map(p => ({ lat: p.lat, lng: p.lng }))
+    if (measurePolyline) {
+        measurePolyline.setPath(path)
+        measurePolyline.setMap(map)
+    } else {
+        measurePolyline = new googleMaps.Polyline({
+            path, map,
+            strokeOpacity: 0,
+            strokeWeight: 3,
+            zIndex: 54,
+            clickable: false,
+            icons: [{
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, strokeColor: MEASURE_LINE_COLOR, scale: 3 },
+                offset: '0',
+                repeat: '10px'
+            }]
+        })
+    }
+
+    if (measurePoints.value.length < 2) clearMeasureLabels()
+}
+
+function buildMeasureLabelConfig(text) {
+    return {
+        text,
+        color: '#0f172a',
+        fontSize: '11px',
+        fontWeight: '700',
+        className: 'gis-measure-length-label'
+    }
+}
+
+function renderMeasureResult(result) {
+    clearMeasureLabels()
+    if (!map || !result?.segments?.length) return
+
+    result.segments.forEach(seg => {
+        const from = measurePoints.value[seg.from_index]
+        const to = measurePoints.value[seg.to_index]
+        if (!from || !to) return
+        const midpoint = {
+            lat: (from.lat + to.lat) / 2,
+            lng: (from.lng + to.lng) / 2
+        }
+        const marker = new googleMaps.Marker({
+            position: midpoint,
+            map,
+            icon: buildInvisibleIcon(),
+            clickable: false,
+            zIndex: 56,
+            label: buildMeasureLabelConfig(formatLength(seg.length_m))
+        })
+        measureLabelMarkers.push(marker)
+    })
+
+    if (result.total_length_m != null && measurePoints.value.length) {
+        const last = measurePoints.value[measurePoints.value.length - 1]
+        measureTotalMarker = new googleMaps.Marker({
+            position: { lat: last.lat, lng: last.lng },
+            map,
+            icon: buildInvisibleIcon(),
+            clickable: false,
+            zIndex: 57,
+            label: buildMeasureLabelConfig(`Tổng: ${formatLength(result.total_length_m)}`)
+        })
+    }
+}
+
+function clearMeasure() {
+    clearMeasureMarkers()
+    clearMeasureLabels()
+    if (measurePolyline) {
+        measurePolyline.setMap(null)
+        measurePolyline = null
+    }
+}
+
+function emitMeasureChange() {
+    emit('measure-points-changed', measurePoints.value.map(p => [p.lng, p.lat]))
+}
+
+function addMeasurePoint(lat, lng) {
+    measurePoints.value = [...measurePoints.value, { lat, lng }]
+    renderMeasurePoints()
+    emitMeasureChange()
+}
+
+function undoMeasurePoint() {
+    if (!measurePoints.value.length) return
+    measurePoints.value = measurePoints.value.slice(0, -1)
+    renderMeasurePoints()
+    emitMeasureChange()
+}
+
+function resetMeasure() {
+    measurePoints.value = []
+    clearMeasure()
+    emitMeasureChange()
+}
+
 watch(() => props.points, (val) => { if (ready.value) syncPoints(val) })
 watch(() => props.clusters, (val) => { if (ready.value) syncClusters(val) })
 watch(() => props.segments, (val) => { if (ready.value) syncSegments(val) })
@@ -667,8 +822,15 @@ watch(() => props.currentGeometry, (geometry) => {
     if (!ready.value || !props.editingSegmentId || editingPolyline) return
     startEditingOverlay(geometry)
 })
+watch(() => props.measureMode, (val) => {
+    if (map) map.getDiv().style.cursor = val ? 'crosshair' : 'default'
+    if (!val) resetMeasure()
+})
+watch(() => props.measureResult, (val) => {
+    if (props.measureMode) renderMeasureResult(val)
+})
 
-defineExpose({ fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentData, dropPin, clearPin, panAndPin })
+defineExpose({ fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentData, dropPin, clearPin, panAndPin, undoMeasurePoint, resetMeasure })
 </script>
 
 <style scoped>
@@ -714,6 +876,16 @@ defineExpose({ fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentDat
     padding: 1px 5px;
     background: rgba(15, 23, 42, 0.75);
     border-radius: 4px;
+    white-space: nowrap;
+}
+
+.gis-measure-length-label {
+    font-family: Roboto, Arial, sans-serif;
+    font-weight: 700;
+    pointer-events: none;
+    padding: 2px 7px;
+    background: rgba(245, 158, 11, 0.92);
+    border-radius: 5px;
     white-space: nowrap;
 }
 </style>

@@ -26,6 +26,18 @@
             </q-tooltip>
         </q-btn>
 
+        <q-btn flat dense no-caps class="ios-action-btn" :class="{ active: measureMode }"
+            @click="$emit('update:measureMode', !measureMode)">
+            <q-icon name="straighten" size="18px" />
+            <span>
+                {{ measureMode ? 'Đang đo' : 'Đo khoảng cách' }}
+            </span>
+
+            <q-tooltip>
+                {{ measureMode ? 'Tắt đo khoảng cách' : 'Đo khoảng cách' }}
+            </q-tooltip>
+        </q-btn>
+
         <template v-if="hasRoute && !routeMode">
             <div class="toolbar-divider" />
 
@@ -100,6 +112,11 @@ const props = defineProps({
         default: false
     },
 
+    measureMode: {
+        type: Boolean,
+        default: false
+    },
+
     routeMode: {
         type: Boolean,
         default: false
@@ -117,6 +134,7 @@ const emit = defineEmits([
     'fit-route',
     'close-route',
     'update:pointsDraggable',
+    'update:measureMode',
     'exit-route-mode',
     'go-sid'
 ])

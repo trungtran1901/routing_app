@@ -49,6 +49,7 @@ export function useGisMap() {
   const savingPointId = ref(null)
   const pointSaveError = ref('')
   const refreshingSegmentIds = shallowRef(new Set())
+  const staleSegmentsDetected = ref(0)
 
   const visiblePointTypes = reactive({ station: true, closure: true, customer: true, underground: true, other: true })
 
@@ -338,9 +339,14 @@ export function useGisMap() {
       applyPointUpdate(data.point)
 
       const refreshedIds = data.refreshed_auto_segments || []
-      refreshedIds.forEach(id => {
-        refreshSegmentUntilMoved(id, lat, lng)
-      })
+      if (refreshedIds.length) {
+        Promise.all(refreshedIds.map(id => refreshSegmentUntilMoved(id, lat, lng)))
+          .then(results => {
+            if (!results.every(Boolean)) {
+              staleSegmentsDetected.value = Date.now()
+            }
+          })
+      }
 
       return data
     } catch (err) {
@@ -485,7 +491,7 @@ export function useGisMap() {
     selectedRouteId, routeSegments, loadingRoute, routeError,
     routeMode, routeModeLabel, routeModePoints, routeModeSegments, loadingRouteMode, routeModeError,
     editingSegmentId, originalGeometry, currentGeometry, isDirty, saving, saveError, conflict,
-    pointsDraggable, savingPointId, pointSaveError, refreshingSegmentIds,
+    pointsDraggable, savingPointId, pointSaveError, refreshingSegmentIds, staleSegmentsDetected,
     visiblePointTypes,
     searchQuery, searchResults, searchLoading, searchError,
     scheduleViewportLoad, loadViewport,
