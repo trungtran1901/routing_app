@@ -32,11 +32,15 @@ const props = defineProps({
             station: true, closure: true, customer: true, underground: true,
             cabinet: true, collection: true, other: true
         })
-    }
+    },
+    measureMode: { type: Boolean, default: false },
+    measurePoints: { type: Array, default: () => [] },
+    measureResult: { type: Object, default: null }
 })
 
 const emit = defineEmits([
-    'ready', 'idle', 'point-click', 'segment-click', 'background-click', 'geometry-changed', 'point-dragend', 'pin-change', 'cluster-click'
+    'ready', 'idle', 'point-click', 'segment-click', 'background-click', 'geometry-changed',
+    'point-dragend', 'pin-change', 'cluster-click', 'measure-click', 'measure-undo'
 ])
 
 const mapEl = ref(null)
@@ -54,14 +58,12 @@ let editingPolyline = null
 let editListeners = []
 let idleListener = null
 
-// Fallback: khi segment không tự mang parent_id, suy ra từ điểm cùng ma_tuyen
-// đã từng thấy parent_id (điểm luôn có parent_id theo response /map/points).
-const pointParentIdByRoute = new Map() // ma_tuyen -> parent_id
+const pointParentIdByRoute = new Map()
+const segmentsByParentId = new Map()
 
-// Theo dõi segment nào thuộc parent_id nào, để khi màu của 1 route resolve
-// xong ta chỉ cập nhật ĐÚNG các polyline liên quan — không repaint toàn bộ,
-// tránh việc gọi lại syncSegments() gây vòng lặp.
-const segmentsByParentId = new Map() // parentId -> Set(segmentId)
+const measureMarkers = []
+let measurePolyline = null
+const measureLabelMarkers = []
 
 const SEGMENT_COLOR_SELECTED = '#facc15'
 const EDIT_COLOR = '#ef4444'
@@ -91,9 +93,17 @@ onMounted(async () => {
     geocoder = markRaw(new googleMaps.Geocoder())
 
     map.addListener('click', e => {
-        emit('background-click')
         if (!e.latLng) return
+        if (props.measureMode) {
+            emit('measure-click', { lat: e.latLng.lat(), lng: e.latLng.lng() })
+            return
+        }
+        emit('background-click')
         dropPin(e.latLng.lat(), e.latLng.lng())
+    })
+
+    map.addListener('rightclick', () => {
+        if (props.measureMode) emit('measure-undo')
     })
 
     idleListener = map.addListener('idle', () => {
@@ -109,6 +119,8 @@ onMounted(async () => {
     syncClusters(props.clusters)
     syncSegments(props.segments)
     syncRoute(props.routeSegments)
+    syncMeasureOverlay(props.measurePoints, props.measureResult)
+    if (props.measureMode) map.getDiv().style.cursor = 'crosshair'
 })
 
 onBeforeUnmount(() => {
@@ -128,6 +140,7 @@ function clearAllOverlays() {
     routePolylines.length = 0
     clearPin()
     stopEditingOverlay()
+    clearMeasureOverlay()
 }
 
 function isPointTypeVisible(pointType) {
@@ -174,8 +187,6 @@ function syncPoints(pointsMap) {
     pointsMap.forEach((point, id) => {
         seen.add(id)
 
-        // Ghi nhớ parent_id theo ma_tuyen để làm fallback màu cho segment
-        // không tự mang parent_id (xem resolveSegmentParentId()).
         if (point.ma_tuyen && point.parent_id) {
             pointParentIdByRoute.set(point.ma_tuyen, point.parent_id)
         }
@@ -193,7 +204,13 @@ function syncPoints(pointsMap) {
                 draggable: props.pointsDraggable,
                 zIndex: 30
             })
-            marker.addListener('click', () => emit('point-click', point))
+            marker.addListener('click', () => {
+                if (props.measureMode) {
+                    emit('measure-click', { lat: point.lat, lng: point.lng })
+                    return
+                }
+                emit('point-click', point)
+            })
             marker.addListener('dragend', () => {
                 const pos = marker.getPosition()
                 emit('point-dragend', { point, lat: pos.lat(), lng: pos.lng() })
@@ -217,7 +234,6 @@ function syncPoints(pointsMap) {
     applyLabelVisibility()
 }
 
-// ── Cluster rendering ──────────────────────
 function clusterKey(c) {
     return `${c.ma_tuyen || ''}:${c.lat.toFixed(5)}:${c.lng.toFixed(5)}:${c.count}`
 }
@@ -290,16 +306,10 @@ function syncClusters(list) {
     })
 }
 
-// ── Route color (từ API theo parent_id, có cache + dedupe request) ──────
 function resolveSegmentParentId(segment) {
     return segment.parent_id || pointParentIdByRoute.get(segment.ma_tuyen) || null
 }
 
-/**
- * Chỉ gọi API khi parentId CHƯA có trong cache. Khi màu về, KHÔNG gọi lại
- * syncSegments() toàn bộ — chỉ cập nhật đúng những polyline đã biết thuộc
- * parentId đó, để tránh vòng lặp (segmentColor -> fetch -> repaint -> ...).
- */
 function ensureRouteColorAndRepaintTargeted(parentId) {
     if (!parentId || hasRouteColorCached(parentId)) return
     ensureRouteColorByParentId(parentId).then(color => {
@@ -331,7 +341,6 @@ function segmentWeight(id) {
     return id === props.selectedSegmentId ? 5 : 3
 }
 
-// ── Segments: toàn bộ vẽ NÉT LIỀN, chỉ khác nhau về màu theo tuyến ───────
 function syncSegments(segmentsMap) {
     if (!map) return
 
@@ -362,7 +371,10 @@ function syncSegments(segmentsMap) {
                 clickable: false,
                 zIndex: 6
             })
-            hit.addListener('click', () => emit('segment-click', id))
+            hit.addListener('click', () => {
+                if (props.measureMode) return
+                emit('segment-click', id)
+            })
             hit.addListener('mouseover', () => visible.setOptions({ strokeWeight: weight + 2 }))
             hit.addListener('mouseout', () => visible.setOptions({ strokeWeight: weight }))
             pair = { hit, visible }
@@ -396,7 +408,7 @@ function syncRoute(list) {
             ? getRouteColorByParentId(parentId, segment.ma_tuyen)
             : getRouteColor(segment.ma_tuyen)
         if (parentId && !hasRouteColorCached(parentId)) {
-            ensureRouteColorByParentId(parentId) // fetch để cache sẵn cho lần sau
+            ensureRouteColorByParentId(parentId)
         }
         const polyline = new googleMaps.Polyline({
             path, map,
@@ -564,6 +576,85 @@ function panAndPin(lat, lng, address, zoomTo = 17) {
     emit('pin-change', { lat, lng, address: address || null })
 }
 
+function clearMeasureOverlay() {
+    measureMarkers.forEach(m => m.setMap(null))
+    measureMarkers.length = 0
+    measureLabelMarkers.forEach(m => m.setMap(null))
+    measureLabelMarkers.length = 0
+    if (measurePolyline) { measurePolyline.setMap(null); measurePolyline = null }
+}
+
+function buildMeasurePointIcon() {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">
+      <circle cx="7" cy="7" r="6" fill="#f97316" stroke="#ffffff" stroke-width="2"/>
+    </svg>`
+    return {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+        scaledSize: new googleMaps.Size(14, 14),
+        anchor: new googleMaps.Point(7, 7)
+    }
+}
+
+function formatMeasureLength(meters) {
+    if (meters == null) return ''
+    return meters >= 1000 ? `${(meters / 1000).toFixed(2)} km` : `${Math.round(meters)} m`
+}
+
+function syncMeasureOverlay(points, result) {
+    clearMeasureOverlay()
+    if (!map || !points?.length) return
+
+    points.forEach(p => {
+        measureMarkers.push(new googleMaps.Marker({
+            position: { lat: p.lat, lng: p.lng },
+            map, icon: buildMeasurePointIcon(), zIndex: 70, clickable: false
+        }))
+    })
+
+    if (points.length < 2) return
+
+    measurePolyline = new googleMaps.Polyline({
+        path: points.map(p => ({ lat: p.lat, lng: p.lng })),
+        map,
+        strokeOpacity: 0,
+        strokeWeight: 3,
+        icons: [{
+            icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, strokeColor: '#f97316', scale: 3 },
+            offset: '0', repeat: '12px'
+        }],
+        zIndex: 65
+    })
+
+    result?.segments?.forEach(seg => {
+        const a = points[seg.from_index]
+        const b = points[seg.to_index]
+        if (!a || !b) return
+        measureLabelMarkers.push(new googleMaps.Marker({
+            position: { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 },
+            map,
+            icon: { path: googleMaps.SymbolPath.CIRCLE, scale: 0.001, fillOpacity: 0, strokeOpacity: 0 },
+            label: {
+                text: formatMeasureLength(seg.length_m),
+                color: '#f97316',
+                fontSize: '11px',
+                fontWeight: '700',
+                className: 'gis-measure-label'
+            },
+            zIndex: 71,
+            clickable: false
+        }))
+    })
+}
+
+function fitToMeasure() {
+    if (!map || !props.measurePoints?.length) return
+    if (props.measurePoints.length === 1) {
+        panToPoint(props.measurePoints[0], 17)
+        return
+    }
+    fitToPaths([props.measurePoints.map(p => ({ lat: p.lat, lng: p.lng }))])
+}
+
 watch(() => props.points, (val) => { if (ready.value) syncPoints(val) })
 watch(() => props.clusters, (val) => { if (ready.value) syncClusters(val) })
 watch(() => props.segments, (val) => { if (ready.value) syncSegments(val) })
@@ -584,8 +675,17 @@ watch(() => props.currentGeometry, (geometry) => {
     if (!ready.value || !props.editingSegmentId || editingPolyline) return
     startEditingOverlay(geometry)
 })
+watch(() => props.measurePoints, val => { if (ready.value) syncMeasureOverlay(val, props.measureResult) }, { deep: true })
+watch(() => props.measureResult, val => { if (ready.value) syncMeasureOverlay(props.measurePoints, val) }, { deep: true })
+watch(() => props.measureMode, val => {
+    if (!val) clearMeasureOverlay()
+    if (map) map.getDiv().style.cursor = val ? 'crosshair' : ''
+})
 
-defineExpose({ fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentData, dropPin, clearPin, panAndPin })
+defineExpose({
+    fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentData,
+    dropPin, clearPin, panAndPin, fitToMeasure
+})
 </script>
 
 <style scoped>
@@ -622,5 +722,12 @@ defineExpose({ fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentDat
         -1px 1px 1px rgba(255, 255, 255, 0.95),
         1px 1px 1px rgba(255, 255, 255, 0.95),
         0 0 3px rgba(255, 255, 255, 0.9);
+}
+
+.gis-measure-label {
+    background: rgba(15, 23, 42, .85);
+    padding: 1px 5px;
+    border-radius: 4px;
+    white-space: nowrap;
 }
 </style>

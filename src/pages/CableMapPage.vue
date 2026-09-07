@@ -8,18 +8,20 @@
             <MapToolbar :map-type="mapType" :loading="gis.loadingMap.value || gis.loadingRouteMode.value"
                 :has-route="!!gis.selectedRouteId.value" :points-draggable="gis.pointsDraggable.value"
                 :route-mode="gis.routeMode.value" :route-mode-label="gis.routeModeLabel.value"
-                @update:map-type="onMapTypeChange" @refresh="onRefresh" @fit-route="onFitRoute"
-                @close-route="gis.clearRoute" @update:points-draggable="onTogglePointsDraggable"
-                @exit-route-mode="onExitRouteMode" @go-sid="onGoSid" />
+                :measure-mode="gis.measureMode.value" @update:map-type="onMapTypeChange" @refresh="onRefresh"
+                @fit-route="onFitRoute" @close-route="gis.clearRoute" @update:points-draggable="onTogglePointsDraggable"
+                @update:measure-mode="gis.toggleMeasureMode" @exit-route-mode="onExitRouteMode" @go-sid="onGoSid" />
         </div>
 
         <GoogleMapView ref="mapViewRef" :points="activePoints" :clusters="gis.clusters.value" :segments="activeSegments"
             :route-segments="gis.routeSegments.value" :selected-segment-id="gis.selectedSegmentId.value"
             :editing-segment-id="gis.editingSegmentId.value" :current-geometry="gis.currentGeometry.value"
             :map-type="mapType" :points-draggable="gis.pointsDraggable.value"
-            :visible-point-types="gis.visiblePointTypes" @ready="onMapReady" @idle="onMapIdle"
-            @point-click="onPointClick" @segment-click="onSegmentClick" @background-click="onBackgroundClick"
-            @geometry-changed="onGeometryChanged" @point-dragend="onPointDragEnd" @pin-change="onPinChange" />
+            :visible-point-types="gis.visiblePointTypes" :measure-mode="gis.measureMode.value"
+            :measure-points="gis.measurePoints.value" :measure-result="gis.measureResult.value" @ready="onMapReady"
+            @idle="onMapIdle" @point-click="onPointClick" @segment-click="onSegmentClick"
+            @background-click="onBackgroundClick" @geometry-changed="onGeometryChanged" @point-dragend="onPointDragEnd"
+            @pin-change="onPinChange" @measure-click="onMeasureClick" @measure-undo="gis.undoMeasurePoint" />
 
         <div class="gis-legend">
             <div class="legend-title">Loại điểm (bấm để ẩn/hiện)</div>
@@ -101,6 +103,43 @@
             :saving="gis.saving.value" :save-error="gis.saveError.value" :conflict="gis.conflict.value"
             @close="gis.clearSelection" @start-edit="onStartEdit" @save="onSaveEdit" @cancel="gis.cancelEdit"
             @fit="onFitSegment" @view-route="onViewRoute" @reload-conflict="onReloadConflict" />
+
+        <q-card v-if="gis.measureMode.value" dark class="measure-panel">
+            <q-card-section class="row items-center q-pb-sm">
+                <q-icon name="straighten" size="16px" color="orange-5" class="q-mr-sm" />
+                <div class="text-subtitle2">Đo khoảng cách</div>
+                <q-space />
+                <q-btn dense flat round icon="close" size="sm" @click="gis.toggleMeasureMode(false)" />
+            </q-card-section>
+
+            <q-card-section class="q-pt-none text-caption">
+                <div v-if="gis.measurePoints.value.length < 2" class="text-grey-5">
+                    Bấm vào bản đồ để chọn điểm ({{ gis.measurePoints.value.length }} điểm, cần tối thiểu 2)
+                </div>
+                <template v-else>
+                    <div v-if="gis.measureLoading.value" class="row items-center q-gutter-xs">
+                        <q-spinner-ios size="14px" /><span>Đang tính...</span>
+                    </div>
+                    <div v-else-if="gis.measureResult.value" class="text-weight-bold text-orange-4">
+                        {{ gis.measureResult.value.total_length_km }} km
+                        <span class="text-grey-5 text-weight-regular">
+                            ({{ Math.round(gis.measureResult.value.total_length_m) }} m ·
+                            {{ gis.measurePoints.value.length }} điểm)
+                        </span>
+                    </div>
+                    <div v-if="gis.measureError.value" class="text-negative">{{ gis.measureError.value }}</div>
+                </template>
+            </q-card-section>
+
+            <q-card-section class="q-pt-none row q-gutter-sm">
+                <q-btn dense no-caps flat color="grey-4" icon="undo" label="Xoá điểm cuối"
+                    :disable="!gis.measurePoints.value.length" @click="gis.undoMeasurePoint" />
+                <q-btn dense no-caps flat color="grey-4" icon="restart_alt" label="Làm lại"
+                    :disable="!gis.measurePoints.value.length" @click="gis.resetMeasure" />
+                <q-btn dense no-caps flat color="grey-4" icon="center_focus_strong" label="Vừa khung"
+                    :disable="!gis.measurePoints.value.length" @click="onFitMeasure" />
+            </q-card-section>
+        </q-card>
 
         <q-card v-if="pinInfo" dark class="pin-info-panel">
             <q-card-section class="row items-center q-pb-none">
@@ -188,7 +227,7 @@ const routeLegend = computed(() => {
     void routeColorVersion.value
 
     const activePointsMap = gis.routeMode.value ? gis.routeModePoints.value : gis.points.value
-    const seen = new Map() // maTuyen -> parentId
+    const seen = new Map()
 
     activeSegments.value.forEach(segment => {
         if (segment.ma_tuyen && !seen.has(segment.ma_tuyen)) {
@@ -367,6 +406,18 @@ function onFitSegment() {
     if (gis.selectedSegmentId.value) mapViewRef.value?.fitToSegment(gis.selectedSegmentId.value)
 }
 
+function onMeasureClick(pt) {
+    gis.addMeasurePoint(pt.lat, pt.lng)
+}
+
+function onFitMeasure() {
+    mapViewRef.value?.fitToMeasure()
+}
+
+function onMeasureKeydown(e) {
+    if (e.key === 'Escape' && gis.measureMode.value) gis.undoMeasurePoint()
+}
+
 async function enterRouteModeFromRoute() {
     const maTuyen = route.params.maTuyen
     if (!maTuyen) return
@@ -385,10 +436,12 @@ watch(() => route.params.maTuyen, (val) => {
 
 onMounted(() => {
     gis.loadPhanLoaiTuyen()
+    window.addEventListener('keydown', onMeasureKeydown)
 })
 
 onBeforeUnmount(() => {
     gis.dispose()
+    window.removeEventListener('keydown', onMeasureKeydown)
 })
 </script>
 
@@ -427,6 +480,16 @@ onBeforeUnmount(() => {
     top: 60px;
     width: 280px;
     z-index: 26;
+    background: rgba(10, 18, 35, .95);
+}
+
+.measure-panel {
+    position: absolute;
+    /* left: 12px; */
+    right: 12px;
+    top: 60px;
+    width: 260px;
+    z-index: 27;
     background: rgba(10, 18, 35, .95);
 }
 
@@ -603,7 +666,8 @@ onBeforeUnmount(() => {
     }
 
     .point-info-panel,
-    .pin-info-panel {
+    .pin-info-panel,
+    .measure-panel {
         left: 6px;
         right: 6px;
         top: auto;

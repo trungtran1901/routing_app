@@ -5,6 +5,7 @@ import { boundsToBBox, pathToLineString, cloneGeometry, isValidLineString } from
 
 const IDLE_DEBOUNCE_MS = 300
 const SEARCH_DEBOUNCE_MS = 350
+const MEASURE_DEBOUNCE_MS = 200
 const POINTS_LIMIT = 2000
 const SEGMENTS_LIMIT = 2000
 
@@ -50,11 +51,16 @@ export function useGisMap() {
     cabinet: true, collection: true, other: true
   })
 
-  // ── Phân loại tuyến (filter) ──────────────────────
   const phanLoaiList = ref([])
   const loadingPhanLoai = ref(false)
   const phanLoaiError = ref('')
   const selectedPhanLoai = reactive({})
+
+  const measureMode = ref(false)
+  const measurePoints = ref([])
+  const measureResult = ref(null)
+  const measureLoading = ref(false)
+  const measureError = ref('')
 
   async function loadPhanLoaiTuyen() {
     loadingPhanLoai.value = true
@@ -101,6 +107,8 @@ export function useGisMap() {
   let searchAbort = null
   let lastLoadedBounds = null
   let lastLoadedZoom = null
+  let measureDebounceTimer = null
+  let measureAbort = null
 
   function scheduleViewportLoad(bounds, zoom) {
     if (routeMode.value) return
@@ -174,12 +182,14 @@ export function useGisMap() {
   }
 
   function selectPoint(point) {
+    if (measureMode.value) return
     selectedSegmentId.value = null
     segmentDetail.value = null
     selectedPoint.value = point
   }
 
   async function selectSegment(segmentId) {
+    if (measureMode.value) return
     selectedPoint.value = null
     selectedSegmentId.value = segmentId
     segmentDetail.value = null
@@ -250,9 +260,7 @@ export function useGisMap() {
     }
   }
 
-  function reloadRouteModeFilter() {
-    // Chế độ xem 1 tuyến không cần lọc theo phân loại (đã chọn đích danh tuyến)
-  }
+  function reloadRouteModeFilter() {}
 
   function exitRouteMode() {
     routeMode.value = false
@@ -456,11 +464,79 @@ export function useGisMap() {
     searchError.value = ''
   }
 
+  function toggleMeasureMode(val) {
+    const next = val != null ? val : !measureMode.value
+    measureMode.value = next
+    if (next) {
+      clearSelection()
+    } else {
+      resetMeasure()
+    }
+  }
+
+  function addMeasurePoint(lat, lng) {
+    if (!measureMode.value) return
+    measurePoints.value = [...measurePoints.value, { lat, lng }]
+    scheduleMeasureFetch()
+  }
+
+  function undoMeasurePoint() {
+    if (!measurePoints.value.length) return
+    measurePoints.value = measurePoints.value.slice(0, -1)
+    if (measurePoints.value.length < 2) {
+      measureResult.value = null
+      if (measureAbort) measureAbort.abort()
+      return
+    }
+    scheduleMeasureFetch()
+  }
+
+  function resetMeasure() {
+    measurePoints.value = []
+    measureResult.value = null
+    measureError.value = ''
+    measureLoading.value = false
+    if (measureDebounceTimer) clearTimeout(measureDebounceTimer)
+    if (measureAbort) measureAbort.abort()
+  }
+
+  function scheduleMeasureFetch() {
+    if (measureDebounceTimer) clearTimeout(measureDebounceTimer)
+    if (measurePoints.value.length < 2) {
+      measureResult.value = null
+      return
+    }
+    measureDebounceTimer = setTimeout(runMeasureFetch, MEASURE_DEBOUNCE_MS)
+  }
+
+  async function runMeasureFetch() {
+    if (measureAbort) measureAbort.abort()
+    measureAbort = new AbortController()
+    const signal = measureAbort.signal
+    const apiPoints = measurePoints.value.map(p => [p.lng, p.lat])
+
+    measureLoading.value = true
+    measureError.value = ''
+    try {
+      const res = await gisAPI.measure(apiPoints, signal)
+      if (signal.aborted) return
+      measureResult.value = res.data?.data || null
+    } catch (err) {
+      if (signal.aborted) return
+      measureError.value = err?.response?.data?.detail || 'Không đo được khoảng cách'
+      measureResult.value = null
+    } finally {
+      if (!signal.aborted) measureLoading.value = false
+    }
+  }
+
   function dispose() {
     if (idleTimer) clearTimeout(idleTimer)
     if (searchTimer) clearTimeout(searchTimer)
     if (viewportAbort) viewportAbort.abort()
     if (searchAbort) searchAbort.abort()
+    if (measureDebounceTimer) clearTimeout(measureDebounceTimer)
+    if (measureAbort) measureAbort.abort()
   }
 
   return {
@@ -473,6 +549,8 @@ export function useGisMap() {
     visiblePointTypes,
     phanLoaiList, loadingPhanLoai, phanLoaiError, selectedPhanLoai, loadPhanLoaiTuyen, togglePhanLoai,
     searchQuery, searchResults, searchLoading, searchError,
+    measureMode, measurePoints, measureResult, measureLoading, measureError,
+    toggleMeasureMode, addMeasurePoint, undoMeasurePoint, resetMeasure,
     scheduleViewportLoad, loadViewport,
     clearSelection, selectPoint, selectSegment,
     loadRoute, clearRoute,
