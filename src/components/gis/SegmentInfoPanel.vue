@@ -15,7 +15,7 @@
                 <div><b>Điểm đầu:</b> {{ detail.start_point?.ten_diem || detail.segment.start_point_id }}</div>
                 <div><b>Điểm cuối:</b> {{ detail.end_point?.ten_diem || detail.segment.end_point_id }}</div>
                 <div v-if="detail.segment.length_m != null"><b>Chiều dài:</b> {{ formatLength(detail.segment.length_m)
-                    }}</div>
+                }}</div>
                 <div><b>Nguồn geometry:</b> {{ detail.segment.geometry_source }}</div>
                 <div><b>Version:</b> {{ detail.segment.geometry_version }}</div>
             </q-card-section>
@@ -25,7 +25,7 @@
                     <q-icon name="cable" size="14px" color="amber" />
                     <span class="text-caption text-weight-bold">SID trên đoạn này</span>
                     <q-badge color="amber-9" text-color="dark">{{ detail.sid_count ?? (detail.sid_list || []).length
-                    }}</q-badge>
+                        }}</q-badge>
                 </div>
                 <div v-if="!detail.sid_list || !detail.sid_list.length" class="text-caption text-grey-6">
                     Không có SID nào đang hoạt động trên đoạn này.
@@ -53,17 +53,25 @@
 
             <q-card-section v-else class="q-pt-none q-gutter-sm">
                 <div class="text-caption text-orange">Đang chỉnh sửa {{ detail.segment.source_id }}</div>
+
+                <div class="row items-center q-gutter-xs text-caption">
+                    <q-spinner-ios v-if="autoSaving" size="14px" color="orange" />
+                    <q-icon v-else-if="!isDirty" name="check_circle" size="14px" color="positive" />
+                    <span :class="autoSaving ? 'text-orange' : (isDirty ? 'text-grey-5' : 'text-positive')">
+                        {{ autoSaving ? 'Đang tự lưu...' : (isDirty ? 'Có thay đổi chưa lưu' : 'Đã lưu tự động') }}
+                    </span>
+                </div>
+
                 <div v-if="conflict" class="text-caption text-negative">
                     {{ saveError }}
                     <q-btn dense flat no-caps color="negative" label="Tải lại dữ liệu mới nhất"
                         @click="$emit('reload-conflict')" />
                 </div>
                 <div v-else-if="saveError" class="text-caption text-negative">{{ saveError }}</div>
+
                 <div class="row q-gutter-sm">
-                    <q-btn dense no-caps color="positive" icon="save" label="Save" :loading="saving" :disable="!isDirty"
-                        @click="$emit('save')" />
-                    <q-btn dense no-caps flat color="grey-4" icon="close" label="Cancel" :disable="saving"
-                        @click="$emit('cancel')" />
+                    <q-btn dense no-caps color="positive" icon="task_alt" label="Hoàn thành chỉnh sửa"
+                        :loading="finishing" :disable="conflict" @click="$emit('finish')" />
                 </div>
             </q-card-section>
         </template>
@@ -81,11 +89,12 @@ defineProps({
     error: { type: String, default: '' },
     editing: { type: Boolean, default: false },
     isDirty: { type: Boolean, default: false },
-    saving: { type: Boolean, default: false },
+    autoSaving: { type: Boolean, default: false },
+    finishing: { type: Boolean, default: false },
     saveError: { type: String, default: '' },
     conflict: { type: Boolean, default: false }
 })
-defineEmits(['close', 'start-edit', 'save', 'cancel', 'fit', 'view-route', 'reload-conflict'])
+defineEmits(['close', 'start-edit', 'finish', 'fit', 'view-route', 'reload-conflict'])
 </script>
 
 <style scoped>

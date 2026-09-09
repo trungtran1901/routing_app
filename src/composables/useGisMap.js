@@ -6,6 +6,7 @@ import { boundsToBBox, pathToLineString, cloneGeometry, isValidLineString } from
 const IDLE_DEBOUNCE_MS = 300
 const SEARCH_DEBOUNCE_MS = 350
 const MEASURE_DEBOUNCE_MS = 200
+const AUTOSAVE_DEBOUNCE_MS = 800
 const POINTS_LIMIT = 2000
 const SEGMENTS_LIMIT = 2000
 
@@ -39,9 +40,14 @@ export function useGisMap() {
   const originalGeometry = ref(null)
   const currentGeometry = ref(null)
   const isDirty = ref(false)
-  const saving = ref(false)
   const saveError = ref('')
   const conflict = ref(false)
+
+  const autoSaving = ref(false)
+  const autoSaveError = ref('')
+  let autoSaveTimer = null
+  // let saveInFlight = false
+  // let saveQueued = false
 
   const pointsDraggable = ref(false)
   const savingPointId = ref(null)
@@ -186,6 +192,7 @@ export function useGisMap() {
 
   function selectPoint(point) {
     if (measureMode.value) return
+    if (editingSegmentId.value) return
     selectedSegmentId.value = null
     segmentDetail.value = null
     selectedPoint.value = point
@@ -193,6 +200,7 @@ export function useGisMap() {
 
   async function selectSegment(segmentId) {
     if (measureMode.value) return
+    if (editingSegmentId.value) return
     selectedPoint.value = null
     selectedSegmentId.value = segmentId
     segmentDetail.value = null
@@ -230,8 +238,6 @@ export function useGisMap() {
     routeError.value = ''
   }
 
-  // keepSelection: giữ nguyên panel đang mở (không gọi clearSelection) — dùng khi
-  // reload ngầm (zoom/pan, sau khi thêm/kéo điểm) để tránh giật UI đang thao tác.
   async function enterRouteMode({ tuyenId, maTuyen }, { keepSelection = false } = {}) {
     if (!tuyenId && !maTuyen) return
 
@@ -250,8 +256,6 @@ export function useGisMap() {
       const params = {}
       if (tuyenId) params.tuyen_id = tuyenId
       else if (maTuyen) params.ma_tuyen = maTuyen
-      // Chặn cache HTTP (browser/proxy) trả về dữ liệu cũ khi tuyến vừa được
-      // cập nhật (thêm điểm mới, kéo vị trí điểm) và reload ngay sau đó.
       params._ts = Date.now()
 
       const res = await gisAPI.getRouteMap(params, signal)
@@ -279,9 +283,6 @@ export function useGisMap() {
     }
   }
 
-  // Tải lại đúng tuyến đang xem (giữ nguyên tuyenId/maTuyen đã dùng lần trước).
-  // Gọi khi: vừa thêm điểm mới, vừa kéo vị trí điểm, hoặc khi zoom/pan bản đồ
-  // trong lúc đang xem một tuyến cụ thể — để không bị dính dữ liệu cache cũ.
   function reloadRouteMode(options = {}) {
     if (!currentRouteModeParams) return Promise.resolve()
     return enterRouteMode(currentRouteModeParams, { keepSelection: true, ...options })
@@ -380,34 +381,22 @@ export function useGisMap() {
     currentGeometry.value = cloneGeometry(geometry)
     isDirty.value = false
     saveError.value = ''
+    autoSaveError.value = ''
     conflict.value = false
   }
 
-  function updateCurrentGeometryFromPath(path) {
-    currentGeometry.value = pathToLineString(path)
-    isDirty.value = true
+  function scheduleAutoSave() {
+    if (autoSaveTimer) clearTimeout(autoSaveTimer)
+    autoSaveTimer = setTimeout(() => { performAutoSave() }, AUTOSAVE_DEBOUNCE_MS)
   }
 
-  function cancelEdit() {
-    editingSegmentId.value = null
-    originalGeometry.value = null
-    currentGeometry.value = null
-    isDirty.value = false
-    saveError.value = ''
-    conflict.value = false
-  }
+  async function performAutoSave() {
+    if (!editingSegmentId.value || !currentGeometry.value) return
+    if (!isValidLineString(currentGeometry.value)) return
 
-  async function saveEdit() {
     const segmentId = editingSegmentId.value
-    if (!segmentId || !currentGeometry.value) return null
-    if (!isValidLineString(currentGeometry.value)) {
-      saveError.value = 'Geometry không hợp lệ (cần tối thiểu 2 điểm, toạ độ hợp lệ).'
-      return null
-    }
-
-    saving.value = true
-    saveError.value = ''
-    conflict.value = false
+    autoSaving.value = true
+    autoSaveError.value = ''
 
     const expectedVersion =
       segmentDetail.value?.segment?.geometry_version ??
@@ -422,28 +411,58 @@ export function useGisMap() {
       const updated = res.data?.data
       if (updated) {
         applySegmentGeometryUpdate(updated.source_id, updated.geometry, updated.geometry_version)
-
         if (segmentDetail.value?.segment?.source_id === updated.source_id) {
           segmentDetail.value = { ...segmentDetail.value, segment: updated }
         }
+        originalGeometry.value = cloneGeometry(updated.geometry)
+        isDirty.value = false
       }
-      editingSegmentId.value = null
-      originalGeometry.value = null
-      currentGeometry.value = null
-      isDirty.value = false
-      return updated
     } catch (err) {
       if (err?.response?.status === 409) {
         conflict.value = true
-        saveError.value =
+        autoSaveError.value =
           err?.response?.data?.detail || 'Geometry đã được người khác cập nhật. Vui lòng tải lại.'
       } else {
-        saveError.value = err?.response?.data?.detail || 'Không lưu được geometry.'
+        autoSaveError.value = err?.response?.data?.detail || 'Không tự lưu được geometry.'
       }
-      return null
     } finally {
-      saving.value = false
+      autoSaving.value = false
     }
+  }
+
+  function updateCurrentGeometryFromPath(path) {
+    currentGeometry.value = pathToLineString(path)
+    isDirty.value = true
+    scheduleAutoSave()
+  }
+
+  function cancelEdit() {
+    if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null }
+    editingSegmentId.value = null
+    originalGeometry.value = null
+    currentGeometry.value = null
+    isDirty.value = false
+    saveError.value = ''
+    autoSaveError.value = ''
+    conflict.value = false
+  }
+
+  async function finishEditing() {
+    if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null }
+
+    if (isDirty.value && currentGeometry.value) {
+      await performAutoSave()
+    }
+
+    if (conflict.value) return false
+
+    editingSegmentId.value = null
+    originalGeometry.value = null
+    currentGeometry.value = null
+    isDirty.value = false
+    saveError.value = ''
+    autoSaveError.value = ''
+    return true
   }
 
   async function reloadSegmentAfterConflict(segmentId) {
@@ -455,6 +474,7 @@ export function useGisMap() {
     }
     conflict.value = false
     saveError.value = ''
+    autoSaveError.value = ''
     return detail
   }
 
@@ -569,6 +589,7 @@ export function useGisMap() {
     if (measureDebounceTimer) clearTimeout(measureDebounceTimer)
     if (measureAbort) measureAbort.abort()
     if (routeModeAbort) routeModeAbort.abort()
+    if (autoSaveTimer) clearTimeout(autoSaveTimer)
   }
 
   return {
@@ -576,7 +597,7 @@ export function useGisMap() {
     selectedPoint, selectedSegmentId, segmentDetail, loadingSegmentDetail, segmentDetailError,
     selectedRouteId, routeSegments, loadingRoute, routeError,
     routeMode, routeModeLabel, routeModePoints, routeModeSegments, loadingRouteMode, routeModeError,
-    editingSegmentId, originalGeometry, currentGeometry, isDirty, saving, saveError, conflict,
+    editingSegmentId, originalGeometry, currentGeometry, isDirty, autoSaving, autoSaveError, saveError, conflict,
     pointsDraggable, savingPointId, pointSaveError,
     visiblePointTypes,
     phanLoaiList, loadingPhanLoai, phanLoaiError, selectedPhanLoai, loadPhanLoaiTuyen, togglePhanLoai,
@@ -588,7 +609,7 @@ export function useGisMap() {
     loadRoute, clearRoute,
     enterRouteMode, exitRouteMode, reloadRouteMode,
     togglePointTypeVisible, setPointsDraggable, updatePointGeometry,
-    startEdit, updateCurrentGeometryFromPath, cancelEdit, saveEdit, reloadSegmentAfterConflict,
+    startEdit, updateCurrentGeometryFromPath, cancelEdit, finishEditing, reloadSegmentAfterConflict,
     scheduleSearch, clearSearch,
     dispose
   }

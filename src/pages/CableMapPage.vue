@@ -125,9 +125,10 @@
         <SegmentInfoPanel v-if="gis.selectedSegmentId.value" :detail="gis.segmentDetail.value"
             :loading="gis.loadingSegmentDetail.value" :error="gis.segmentDetailError.value"
             :editing="gis.editingSegmentId.value === gis.selectedSegmentId.value" :is-dirty="gis.isDirty.value"
-            :saving="gis.saving.value" :save-error="gis.saveError.value" :conflict="gis.conflict.value"
-            @close="gis.clearSelection" @start-edit="onStartEdit" @save="onSaveEdit" @cancel="gis.cancelEdit"
-            @fit="onFitSegment" @view-route="onViewRoute" @reload-conflict="onReloadConflict" />
+            :auto-saving="gis.autoSaving.value" :finishing="finishingEdit"
+            :save-error="gis.autoSaveError.value || gis.saveError.value" :conflict="gis.conflict.value"
+            @close="gis.clearSelection" @start-edit="onStartEdit" @finish="onFinishEdit" @fit="onFitSegment"
+            @view-route="onViewRoute" @reload-conflict="onReloadConflict" />
 
         <q-card v-if="gis.measureMode.value" dark class="measure-panel">
             <q-card-section class="row items-center q-pb-sm">
@@ -234,13 +235,12 @@ const ROUTE_IDLE_DEBOUNCE_MS = 400
 const addPointOpen = ref(false)
 const ADD_POINT_VIEW_NAME = 'hatang_quanlytuyen_newversion_detail_insert_maps'
 
-// ── Trạng thái đóng/mở & hiện/ẩn các khối chú thích ──
-// Mỗi khối có thể thu gọn riêng (bấm vào tiêu đề), và có 1 nút tổng để
-// ẩn/hiện tất cả — tránh việc các khối chồng lấn nhau khi màn hình nhỏ.
 const legendsVisible = ref(true)
 const pointLegendOpen = ref(true)
 const routeLegendOpen = ref(true)
 const phanLoaiLegendOpen = ref(true)
+
+const finishingEdit = ref(false)
 
 const SMALL_SCREEN_BREAKPOINT = 640
 
@@ -370,6 +370,7 @@ async function onSegmentClick(segmentId) {
 }
 
 function onBackgroundClick() {
+    if (gis.editingSegmentId.value) return
     gis.clearSelection()
 }
 
@@ -383,13 +384,6 @@ async function onPointDragEnd({ point, lat, lng }) {
                 message: `Đã tự cập nhật ${result.refreshed_auto_segments.length} đoạn cáp AUTO liên quan.`
             })
         }
-        // Vị trí điểm và các đoạn AUTO liên quan đã được cập nhật ngay tại chỗ
-        // (applyPointUpdate/applySegmentGeometryUpdate) từ chính response của
-        // updatePointGeometry, nên không cần refetch ngay lập tức — refetch quá
-        // sớm có thể ăn nhầm dữ liệu chưa kịp ghi/đánh index ở backend, đè lên
-        // state đúng vừa cập nhật. Chỉ đồng bộ lại từ server sau một khoảng chờ
-        // ngắn để bắt các thay đổi gián tiếp khác (ví dụ đoạn không thuộc danh
-        // sách refreshed_auto_segments).
         setTimeout(() => {
             if (gis.routeMode.value) {
                 gis.reloadRouteMode()
@@ -483,12 +477,14 @@ function onGeometryChanged(path) {
     gis.updateCurrentGeometryFromPath(path)
 }
 
-async function onSaveEdit() {
-    const result = await gis.saveEdit()
-    if (result) {
-        Notify.create({ type: 'positive', message: 'Đã lưu geometry.' })
-    } else if (gis.saveError.value && !gis.conflict.value) {
-        Notify.create({ type: 'negative', message: gis.saveError.value })
+async function onFinishEdit() {
+    finishingEdit.value = true
+    const ok = await gis.finishEditing()
+    finishingEdit.value = false
+    if (ok) {
+        Notify.create({ type: 'positive', message: 'Đã hoàn thành chỉnh sửa đoạn cáp.' })
+    } else if (gis.autoSaveError.value) {
+        Notify.create({ type: 'negative', message: gis.autoSaveError.value })
     }
 }
 
@@ -586,7 +582,6 @@ onBeforeUnmount(() => {
 
 .measure-panel {
     position: absolute;
-    /* left: 12px; */
     right: 12px;
     top: 60px;
     width: 260px;
@@ -602,7 +597,6 @@ onBeforeUnmount(() => {
     z-index: 30;
 }
 
-/* ── Nút bật/tắt tổng cho toàn bộ chú thích ── */
 .legend-toggle-fab {
     position: absolute;
     left: 12px;
@@ -631,8 +625,6 @@ onBeforeUnmount(() => {
     overflow-y: auto;
 }
 
-/* Khối "Tuyến trong khung nhìn" + "Phân loại tuyến" tự cuộn nội bộ
-   thay vì tràn ra ngoài — tránh chồng lấn khi màn hình nhỏ */
 .gis-top-left-stack {
     position: absolute;
     left: 12px;
@@ -662,7 +654,6 @@ onBeforeUnmount(() => {
     overflow-y: auto;
 }
 
-/* Header dùng chung: bấm để đóng/mở từng khối chú thích */
 .legend-header {
     display: flex;
     align-items: center;

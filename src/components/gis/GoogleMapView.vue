@@ -94,6 +94,7 @@ onMounted(async () => {
 
     map.addListener('click', e => {
         if (!e.latLng) return
+        if (props.editingSegmentId) return
         if (props.measureMode) {
             emit('measure-click', { lat: e.latLng.lat(), lng: e.latLng.lng() })
             return
@@ -238,7 +239,6 @@ function clusterKey(c) {
     return `${c.ma_tuyen || ''}:${c.lat.toFixed(5)}:${c.lng.toFixed(5)}:${c.count}`
 }
 
-// Kích thước cụm điểm đã được thu nhỏ lại so với trước
 function clusterSize(count) {
     if (count >= 100) return 40
     if (count >= 50) return 34
