@@ -23,53 +23,78 @@
             @background-click="onBackgroundClick" @geometry-changed="onGeometryChanged" @point-dragend="onPointDragEnd"
             @pin-change="onPinChange" @measure-click="onMeasureClick" @measure-undo="gis.undoMeasurePoint" />
 
-        <div class="gis-legend">
-            <div class="legend-title">Loại điểm (bấm để ẩn/hiện)</div>
-            <div v-for="(meta, key) in POINT_TYPE_META" :key="key" class="legend-row legend-row--toggle"
-                :class="{ 'legend-row--off': gis.visiblePointTypes[key] === false }"
-                @click="gis.togglePointTypeVisible(key)">
-                <q-checkbox dense :model-value="gis.visiblePointTypes[key] !== false" color="primary"
-                    @update:model-value="gis.togglePointTypeVisible(key)" @click.stop />
-                <span class="legend-icon" v-html="meta.svg" />
-                <span>{{ meta.label }}</span>
+        <!-- Nút bật/tắt toàn bộ khối chú thích -->
+        <q-btn round unelevated size="sm" color="dark" text-color="grey-3" icon="layers" class="legend-toggle-fab"
+            :class="{ 'legend-toggle-fab--active': legendsVisible }" @click="legendsVisible = !legendsVisible">
+            <q-tooltip>{{ legendsVisible ? 'Ẩn chú thích' : 'Hiện chú thích' }}</q-tooltip>
+        </q-btn>
+
+        <div class="gis-legend" v-show="legendsVisible">
+            <div class="legend-header" @click="pointLegendOpen = !pointLegendOpen">
+                <span class="legend-title">Loại điểm (bấm để ẩn/hiện)</span>
+                <q-icon :name="pointLegendOpen ? 'expand_more' : 'chevron_right'" size="16px" />
             </div>
-            <div class="legend-row">
-                <span class="legend-cluster-dot" />
-                <span>Cụm điểm (gom theo lưới)</span>
-            </div>
-            <div v-if="gis.pointsDraggable.value" class="drag-hint">
-                <q-icon name="info" size="12px" /> Kéo marker để lưu vị trí mới
-            </div>
-            <div class="drag-hint pin-hint">
-                <q-icon name="push_pin" size="12px" /> Bấm vào bản đồ để ghim toạ độ
+            <div v-show="pointLegendOpen" class="legend-body">
+                <div v-for="(meta, key) in POINT_TYPE_META" :key="key" class="legend-row legend-row--toggle"
+                    :class="{ 'legend-row--off': gis.visiblePointTypes[key] === false }"
+                    @click="gis.togglePointTypeVisible(key)">
+                    <q-checkbox dense :model-value="gis.visiblePointTypes[key] !== false" color="primary"
+                        @update:model-value="gis.togglePointTypeVisible(key)" @click.stop />
+                    <span class="legend-icon" v-html="meta.svg" />
+                    <span>{{ meta.label }}</span>
+                </div>
+                <div class="legend-row">
+                    <span class="legend-cluster-dot" />
+                    <span>Cụm điểm (gom theo lưới)</span>
+                </div>
+                <div v-if="gis.pointsDraggable.value" class="drag-hint">
+                    <q-icon name="info" size="12px" /> Kéo marker để lưu vị trí mới
+                </div>
+                <div class="drag-hint pin-hint">
+                    <q-icon name="push_pin" size="12px" /> Bấm vào bản đồ để ghim toạ độ
+                </div>
             </div>
         </div>
 
-        <div class="gis-top-left-stack">
+        <div class="gis-top-left-stack" v-show="legendsVisible">
             <div v-if="routeLegend.length" class="gis-route-legend">
-                <div class="legend-title">Tuyến trong khung nhìn ({{ routeLegend.length }})</div>
-                <div v-for="r in routeLegend" :key="r.maTuyen" class="legend-row">
-                    <span class="legend-line" :style="{ background: r.color }" />
-                    <span class="legend-route-label" :title="r.maTuyen">{{ r.maTuyen }}</span>
+                <div class="legend-header" @click="routeLegendOpen = !routeLegendOpen">
+                    <span class="legend-title">Tuyến trong khung nhìn ({{ routeLegend.length }})</span>
+                    <q-icon :name="routeLegendOpen ? 'expand_more' : 'chevron_right'" size="16px" />
+                </div>
+                <div v-show="routeLegendOpen" class="legend-body">
+                    <div v-for="r in routeLegend" :key="r.maTuyen" class="legend-row legend-row--toggle"
+                        :class="{ 'legend-row--active': gis.routeMode.value && gis.routeModeLabel.value === r.maTuyen }"
+                        @click="onSelectRouteLegend(r.maTuyen)">
+                        <span class="legend-line" :style="{ background: r.color }" />
+                        <span class="legend-route-label" :title="r.maTuyen">{{ r.maTuyen }}</span>
+                    </div>
                 </div>
             </div>
 
             <div class="gis-phanloai-legend">
-                <div class="legend-title">Phân loại tuyến (bấm để ẩn/hiện)</div>
-                <div v-if="gis.loadingPhanLoai.value" class="legend-loading">
-                    <q-spinner-ios size="14px" /> Đang tải...
+                <div class="legend-header" @click="phanLoaiLegendOpen = !phanLoaiLegendOpen">
+                    <span class="legend-title">Phân loại tuyến (bấm để ẩn/hiện)</span>
+                    <q-icon :name="phanLoaiLegendOpen ? 'expand_more' : 'chevron_right'" size="16px" />
                 </div>
-                <template v-else>
-                    <div v-for="item in gis.phanLoaiList.value" :key="item.code" class="legend-row legend-row--toggle"
-                        :class="{ 'legend-row--off': gis.selectedPhanLoai[item.code] === false }"
-                        @click="gis.togglePhanLoai(item.code)">
-                        <q-checkbox dense :model-value="gis.selectedPhanLoai[item.code] !== false" color="primary"
-                            @update:model-value="gis.togglePhanLoai(item.code)" @click.stop />
-                        <span class="legend-dot" :style="{ background: item.mau_chu || item.mau_sac || '#64748b' }" />
-                        <span :title="item.name">{{ item.name }}</span>
+                <div v-show="phanLoaiLegendOpen" class="legend-body">
+                    <div v-if="gis.loadingPhanLoai.value" class="legend-loading">
+                        <q-spinner-ios size="14px" /> Đang tải...
                     </div>
-                    <div v-if="gis.phanLoaiError.value" class="legend-error">{{ gis.phanLoaiError.value }}</div>
-                </template>
+                    <template v-else>
+                        <div v-for="item in gis.phanLoaiList.value" :key="item.code"
+                            class="legend-row legend-row--toggle"
+                            :class="{ 'legend-row--off': gis.selectedPhanLoai[item.code] === false }"
+                            @click="gis.togglePhanLoai(item.code)">
+                            <q-checkbox dense :model-value="gis.selectedPhanLoai[item.code] !== false" color="primary"
+                                @update:model-value="gis.togglePhanLoai(item.code)" @click.stop />
+                            <span class="legend-dot"
+                                :style="{ background: item.mau_chu || item.mau_sac || '#64748b' }" />
+                            <span :title="item.name">{{ item.name }}</span>
+                        </div>
+                        <div v-if="gis.phanLoaiError.value" class="legend-error">{{ gis.phanLoaiError.value }}</div>
+                    </template>
+                </div>
             </div>
         </div>
 
@@ -152,16 +177,21 @@
                 <div><b>Toạ độ:</b> {{ pinInfo.lat.toFixed(6) }}, {{ pinInfo.lng.toFixed(6) }}</div>
                 <div v-if="pinInfo.address"><b>Địa chỉ:</b> {{ pinInfo.address }}</div>
                 <div v-else class="text-grey-6"><q-spinner size="12px" /> Đang tra địa chỉ...</div>
+                <div v-if="!gis.routeMode.value" class="text-amber">
+                    <q-icon name="info" size="12px" /> Chọn xem một tuyến để có thể thêm điểm
+                </div>
             </q-card-section>
             <q-card-section class="q-pt-none row q-gutter-sm">
                 <q-btn dense no-caps flat color="grey-4" icon="content_copy" label="Copy toạ độ"
                     @click="copyPinCoords" />
                 <q-btn dense no-caps flat color="grey-4" icon="center_focus_strong" label="Fit" @click="onFitPin" />
-                <q-btn dense no-caps color="primary" icon="add_location_alt" label="Thêm điểm" @click="openAddPoint" />
+                <q-btn v-if="gis.routeMode.value" dense no-caps color="primary" icon="add_location_alt"
+                    label="Thêm điểm" @click="openAddPoint" />
             </q-card-section>
         </q-card>
         <RemoteAddPointDrawer v-if="pinInfo" v-model="addPointOpen" :view="ADD_POINT_VIEW_NAME" :lat="pinInfo.lat"
-            :lng="pinInfo.lng" :address="pinInfo.address" @created="onPointCreated" />
+            :lng="pinInfo.lng" :address="pinInfo.address" :ma-tuyen="currentRouteMaTuyen"
+            :parent-id="currentRouteParentId" @created="onPointCreated" />
         <q-banner v-if="gis.mapError.value" dense class="gis-error-banner bg-negative text-white">
             {{ gis.mapError.value }}
         </q-banner>
@@ -199,10 +229,33 @@ const mapType = ref('roadmap')
 const pinInfo = ref(null)
 let lastBounds = null
 let lastZoom = null
+let routeIdleTimer = null
+const ROUTE_IDLE_DEBOUNCE_MS = 400
 const addPointOpen = ref(false)
 const ADD_POINT_VIEW_NAME = 'hatang_quanlytuyen_newversion_detail_insert_maps'
 
+// ── Trạng thái đóng/mở & hiện/ẩn các khối chú thích ──
+// Mỗi khối có thể thu gọn riêng (bấm vào tiêu đề), và có 1 nút tổng để
+// ẩn/hiện tất cả — tránh việc các khối chồng lấn nhau khi màn hình nhỏ.
+const legendsVisible = ref(true)
+const pointLegendOpen = ref(true)
+const routeLegendOpen = ref(true)
+const phanLoaiLegendOpen = ref(true)
+
+const SMALL_SCREEN_BREAKPOINT = 640
+
+function applyResponsiveLegendDefaults() {
+    const isSmall = window.innerWidth <= SMALL_SCREEN_BREAKPOINT
+    pointLegendOpen.value = true
+    routeLegendOpen.value = !isSmall
+    phanLoaiLegendOpen.value = !isSmall
+}
+
 function openAddPoint() {
+    if (!gis.routeMode.value) {
+        Notify.create({ type: 'warning', message: 'Vui lòng chọn xem một tuyến trước khi thêm điểm.' })
+        return
+    }
     addPointOpen.value = true
 }
 function resolveParentIdForRoute(maTuyen, segmentsMap, pointsMap) {
@@ -214,14 +267,33 @@ function resolveParentIdForRoute(maTuyen, segmentsMap, pointsMap) {
     }
     return null
 }
+const RELOAD_SETTLE_DELAY_MS = 400
+
 function onPointCreated() {
     Notify.create({ type: 'positive', message: 'Đã thêm điểm mới trên bản đồ.' })
     clearPinInfo()
     mapViewRef.value?.clearPin()
-    if (lastBounds) gis.loadViewport(lastBounds, lastZoom)
+    setTimeout(() => {
+        if (gis.routeMode.value) {
+            enterRouteModeFromRoute()
+        } else if (lastBounds) {
+            gis.loadViewport(lastBounds, lastZoom)
+        }
+    }, RELOAD_SETTLE_DELAY_MS)
 }
 const activePoints = computed(() => gis.routeMode.value ? gis.routeModePoints.value : gis.points.value)
 const activeSegments = computed(() => gis.routeMode.value ? gis.routeModeSegments.value : gis.segments.value)
+
+const currentRouteMaTuyen = computed(() => gis.routeMode.value ? gis.routeModeLabel.value : '')
+
+const currentRouteParentId = computed(() => {
+    if (!gis.routeMode.value || !gis.routeModeLabel.value) return ''
+    return resolveParentIdForRoute(
+        gis.routeModeLabel.value,
+        gis.routeModeSegments.value,
+        gis.routeModePoints.value
+    ) || ''
+})
 
 const routeLegend = computed(() => {
     void routeColorVersion.value
@@ -247,6 +319,12 @@ const routeLegend = computed(() => {
         .sort((a, b) => a.maTuyen.localeCompare(b.maTuyen))
 })
 
+function onSelectRouteLegend(maTuyen) {
+    if (!maTuyen) return
+    if (gis.routeMode.value && gis.routeModeLabel.value === maTuyen) return
+    router.push(`/route/map/${encodeURIComponent(maTuyen)}`)
+}
+
 function onMapReady(map) {
     mapInstance.value = map
 }
@@ -254,6 +332,11 @@ function onMapReady(map) {
 function onMapIdle({ bounds, zoom }) {
     lastBounds = bounds
     lastZoom = zoom
+    if (gis.routeMode.value) {
+        if (routeIdleTimer) clearTimeout(routeIdleTimer)
+        routeIdleTimer = setTimeout(() => { gis.reloadRouteMode() }, ROUTE_IDLE_DEBOUNCE_MS)
+        return
+    }
     gis.scheduleViewportLoad(bounds, zoom)
 }
 
@@ -300,6 +383,20 @@ async function onPointDragEnd({ point, lat, lng }) {
                 message: `Đã tự cập nhật ${result.refreshed_auto_segments.length} đoạn cáp AUTO liên quan.`
             })
         }
+        // Vị trí điểm và các đoạn AUTO liên quan đã được cập nhật ngay tại chỗ
+        // (applyPointUpdate/applySegmentGeometryUpdate) từ chính response của
+        // updatePointGeometry, nên không cần refetch ngay lập tức — refetch quá
+        // sớm có thể ăn nhầm dữ liệu chưa kịp ghi/đánh index ở backend, đè lên
+        // state đúng vừa cập nhật. Chỉ đồng bộ lại từ server sau một khoảng chờ
+        // ngắn để bắt các thay đổi gián tiếp khác (ví dụ đoạn không thuộc danh
+        // sách refreshed_auto_segments).
+        setTimeout(() => {
+            if (gis.routeMode.value) {
+                gis.reloadRouteMode()
+            } else if (lastBounds) {
+                gis.loadViewport(lastBounds, lastZoom)
+            }
+        }, RELOAD_SETTLE_DELAY_MS)
     } else if (gis.pointSaveError.value) {
         Notify.create({ type: 'negative', message: gis.pointSaveError.value })
     }
@@ -437,11 +534,15 @@ watch(() => route.params.maTuyen, (val) => {
 onMounted(() => {
     gis.loadPhanLoaiTuyen()
     window.addEventListener('keydown', onMeasureKeydown)
+    applyResponsiveLegendDefaults()
+    window.addEventListener('resize', applyResponsiveLegendDefaults)
 })
 
 onBeforeUnmount(() => {
     gis.dispose()
     window.removeEventListener('keydown', onMeasureKeydown)
+    window.removeEventListener('resize', applyResponsiveLegendDefaults)
+    if (routeIdleTimer) clearTimeout(routeIdleTimer)
 })
 </script>
 
@@ -501,19 +602,37 @@ onBeforeUnmount(() => {
     z-index: 30;
 }
 
-.gis-legend {
+/* ── Nút bật/tắt tổng cho toàn bộ chú thích ── */
+.legend-toggle-fab {
     position: absolute;
     left: 12px;
     bottom: 12px;
+    z-index: 22;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .4);
+}
+
+.legend-toggle-fab--active {
+    color: #60a5fa;
+}
+
+.gis-legend {
+    position: absolute;
+    left: 12px;
+    bottom: 58px;
     z-index: 20;
     background: rgba(10, 18, 35, .92);
     border: 1px solid #1e293b;
     border-radius: 10px;
-    padding: 8px 12px;
+    padding: 6px 10px;
     font-size: 11px;
     color: #94a3b8;
+    max-width: 220px;
+    max-height: 40vh;
+    overflow-y: auto;
 }
 
+/* Khối "Tuyến trong khung nhìn" + "Phân loại tuyến" tự cuộn nội bộ
+   thay vì tràn ra ngoài — tránh chồng lấn khi màn hình nhỏ */
 .gis-top-left-stack {
     position: absolute;
     left: 12px;
@@ -522,19 +641,36 @@ onBeforeUnmount(() => {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-width: 220px;
-    max-height: calc(100% - 80px);
+    width: 220px;
+    max-height: calc(100vh - 240px);
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .gis-phanloai-legend {
     background: rgba(10, 18, 35, .92);
     border: 1px solid #1e293b;
     border-radius: 10px;
-    padding: 8px 12px;
+    padding: 6px 10px;
     font-size: 11px;
     color: #94a3b8;
-    max-height: 260px;
+    flex-shrink: 0;
+}
+
+.gis-phanloai-legend .legend-body {
+    max-height: 220px;
     overflow-y: auto;
+}
+
+/* Header dùng chung: bấm để đóng/mở từng khối chú thích */
+.legend-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 0;
 }
 
 .legend-title {
@@ -543,7 +679,10 @@ onBeforeUnmount(() => {
     text-transform: uppercase;
     letter-spacing: .6px;
     color: #475569;
-    margin-bottom: 6px;
+}
+
+.legend-body {
+    margin-top: 4px;
 }
 
 .legend-loading {
@@ -584,6 +723,10 @@ onBeforeUnmount(() => {
 
 .legend-row--off {
     opacity: .4;
+}
+
+.legend-row--active {
+    background: #1e3a5f;
 }
 
 .legend-icon {
@@ -633,11 +776,9 @@ onBeforeUnmount(() => {
     background: rgba(10, 18, 35, .92);
     border: 1px solid #1e293b;
     border-radius: 10px;
-    padding: 8px 12px;
+    padding: 6px 10px;
     font-size: 11px;
     color: #94a3b8;
-    max-height: 260px;
-    overflow-y: auto;
     flex-shrink: 0;
 }
 
@@ -679,17 +820,22 @@ onBeforeUnmount(() => {
     .gis-top-left-stack {
         left: 6px;
         right: 6px;
-        top: auto;
-        bottom: 120px;
-        max-width: none;
-        max-height: 40vh;
+        top: 60px;
+        width: auto;
+        max-height: 34vh;
     }
 
     .gis-legend {
         left: 6px;
         right: 6px;
-        bottom: 6px;
+        bottom: 52px;
         max-width: none;
+        max-height: 28vh;
+    }
+
+    .legend-toggle-fab {
+        left: 6px;
+        bottom: 6px;
     }
 
     .gis-error-banner {

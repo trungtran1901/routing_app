@@ -33,6 +33,7 @@ export function useGisMap() {
   const routeModeSegments = shallowRef(new Map())
   const loadingRouteMode = ref(false)
   const routeModeError = ref('')
+  let currentRouteModeParams = null
 
   const editingSegmentId = ref(null)
   const originalGeometry = ref(null)
@@ -109,6 +110,8 @@ export function useGisMap() {
   let lastLoadedZoom = null
   let measureDebounceTimer = null
   let measureAbort = null
+  let routeModeAbort = null
+  let routeModeRequestId = 0
 
   function scheduleViewportLoad(bounds, zoom) {
     if (routeMode.value) return
@@ -227,17 +230,32 @@ export function useGisMap() {
     routeError.value = ''
   }
 
-  async function enterRouteMode({ tuyenId, maTuyen }) {
+  // keepSelection: giữ nguyên panel đang mở (không gọi clearSelection) — dùng khi
+  // reload ngầm (zoom/pan, sau khi thêm/kéo điểm) để tránh giật UI đang thao tác.
+  async function enterRouteMode({ tuyenId, maTuyen }, { keepSelection = false } = {}) {
+    if (!tuyenId && !maTuyen) return
+
+    currentRouteModeParams = { tuyenId, maTuyen }
+
+    if (routeModeAbort) routeModeAbort.abort()
+    routeModeAbort = new AbortController()
+    const myRequestId = ++routeModeRequestId
+    const signal = routeModeAbort.signal
+
     loadingRouteMode.value = true
     routeModeError.value = ''
-    clearSelection()
+    if (!keepSelection) clearSelection()
+
     try {
       const params = {}
       if (tuyenId) params.tuyen_id = tuyenId
       else if (maTuyen) params.ma_tuyen = maTuyen
-      else throw new Error('missing tuyenId/maTuyen')
+      // Chặn cache HTTP (browser/proxy) trả về dữ liệu cũ khi tuyến vừa được
+      // cập nhật (thêm điểm mới, kéo vị trí điểm) và reload ngay sau đó.
+      params._ts = Date.now()
 
-      const res = await gisAPI.getRouteMap(params)
+      const res = await gisAPI.getRouteMap(params, signal)
+      if (myRequestId !== routeModeRequestId) return
       const data = res.data?.data
       if (!data) throw new Error('empty')
 
@@ -251,18 +269,31 @@ export function useGisMap() {
       routeModeLabel.value = maTuyen || data.tuyen_id || ''
       routeMode.value = true
     } catch (err) {
+      if (signal.aborted) return
       routeModeError.value = err?.response?.data?.detail || 'Không tải được tuyến'
       routeMode.value = false
       routeModePoints.value = new Map()
       routeModeSegments.value = new Map()
     } finally {
-      loadingRouteMode.value = false
+      if (myRequestId === routeModeRequestId) loadingRouteMode.value = false
     }
   }
 
-  function reloadRouteModeFilter() {}
+  // Tải lại đúng tuyến đang xem (giữ nguyên tuyenId/maTuyen đã dùng lần trước).
+  // Gọi khi: vừa thêm điểm mới, vừa kéo vị trí điểm, hoặc khi zoom/pan bản đồ
+  // trong lúc đang xem một tuyến cụ thể — để không bị dính dữ liệu cache cũ.
+  function reloadRouteMode(options = {}) {
+    if (!currentRouteModeParams) return Promise.resolve()
+    return enterRouteMode(currentRouteModeParams, { keepSelection: true, ...options })
+  }
+
+  function reloadRouteModeFilter() {
+    reloadRouteMode()
+  }
 
   function exitRouteMode() {
+    if (routeModeAbort) routeModeAbort.abort()
+    currentRouteModeParams = null
     routeMode.value = false
     routeModeLabel.value = ''
     routeModeError.value = ''
@@ -537,6 +568,7 @@ export function useGisMap() {
     if (searchAbort) searchAbort.abort()
     if (measureDebounceTimer) clearTimeout(measureDebounceTimer)
     if (measureAbort) measureAbort.abort()
+    if (routeModeAbort) routeModeAbort.abort()
   }
 
   return {
@@ -554,7 +586,7 @@ export function useGisMap() {
     scheduleViewportLoad, loadViewport,
     clearSelection, selectPoint, selectSegment,
     loadRoute, clearRoute,
-    enterRouteMode, exitRouteMode,
+    enterRouteMode, exitRouteMode, reloadRouteMode,
     togglePointTypeVisible, setPointsDraggable, updatePointGeometry,
     startEdit, updateCurrentGeometryFromPath, cancelEdit, saveEdit, reloadSegmentAfterConflict,
     scheduleSearch, clearSearch,

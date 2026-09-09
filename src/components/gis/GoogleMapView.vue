@@ -238,21 +238,22 @@ function clusterKey(c) {
     return `${c.ma_tuyen || ''}:${c.lat.toFixed(5)}:${c.lng.toFixed(5)}:${c.count}`
 }
 
+// Kích thước cụm điểm đã được thu nhỏ lại so với trước
 function clusterSize(count) {
-    if (count >= 100) return 56
-    if (count >= 50) return 48
-    if (count >= 10) return 42
-    return 36
+    if (count >= 100) return 40
+    if (count >= 50) return 34
+    if (count >= 10) return 28
+    return 22
 }
 
 function buildClusterIcon(count) {
     const size = clusterSize(count)
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 2}" fill="#0a84ff" fill-opacity="0.28" stroke="#0a84ff" stroke-width="1.5"/>
-    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 9}" fill="#0a84ff"/>
+    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1.5}" fill="#0a84ff" fill-opacity="0.28" stroke="#0a84ff" stroke-width="1.2"/>
+    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 7}" fill="#0a84ff"/>
     <text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle"
       font-family="system-ui,sans-serif" font-weight="700"
-      font-size="${size >= 48 ? 14 : 12}" fill="#ffffff">${count}</text>
+      font-size="${size >= 34 ? 12 : 10}" fill="#ffffff">${count}</text>
   </svg>`
     return {
         url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
