@@ -222,18 +222,37 @@ export function pointTypeMeta(pointType) {
 export function shouldShowLabel(pointType) {
   return normalizePointType(pointType) === 'station'
 }
+const SCALE_MIN = 0.5
+const SCALE_PEAK = 1.25
+const SCALE_AT_MAX = 0.9
+const ZOOM_BASE = 15
+const ZOOM_PEAK = 18
+const ZOOM_MAX = 22
+export function zoomScale(zoom) {
+  const z = Number.isFinite(zoom) ? zoom : ZOOM_BASE
+  if (z <= ZOOM_BASE) {
+    const t = Math.max(0, (z - 10) / (ZOOM_BASE - 10))
+    return SCALE_MIN + (1 - SCALE_MIN) * t
+  }
+  if (z <= ZOOM_PEAK) {
+    const t = (z - ZOOM_BASE) / (ZOOM_PEAK - ZOOM_BASE)
+    return 1 + (SCALE_PEAK - 1) * t
+  }
+  const t = Math.min(1, (z - ZOOM_PEAK) / (ZOOM_MAX - ZOOM_PEAK))
+  return SCALE_PEAK + (SCALE_AT_MAX - SCALE_PEAK) * t
+}
 
 const iconCache = new Map()
 
-export function buildPointIcon(googleMaps, pointType) {
+export function buildPointIcon(googleMaps, pointType, scale = 1) {
   const key = normalizePointType(pointType)
-  if (iconCache.has(key)) return iconCache.get(key)
+  const cacheKey = `${key}@${scale}`
+  if (iconCache.has(cacheKey)) return iconCache.get(cacheKey)
 
   const meta = POINT_TYPE_META[key]
   const url = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(meta.svg)
-  const w = meta.size
-  const h = meta.size
-  // Ghim: neo ở mũi nhọn (đáy hình); các loại khác: neo ở tâm
+  const w = Math.max(7, Math.round(meta.size * scale))
+  const h = w
   const anchorY = meta.anchorBottom ? h * 0.93 : h / 2
   const icon = {
     url,
@@ -241,6 +260,6 @@ export function buildPointIcon(googleMaps, pointType) {
     anchor: new googleMaps.Point(w / 2, anchorY),
     labelOrigin: new googleMaps.Point(w + 40, h / 2)
   }
-  iconCache.set(key, icon)
+  iconCache.set(cacheKey, icon)
   return icon
 }

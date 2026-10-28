@@ -21,7 +21,7 @@
         <GoogleMapView ref="mapViewRef" :points="points" :segments="segments" :selected-segment-id="selectedSegmentId"
             @idle="() => { }" @point-click="onPointClick" @segment-click="onSegmentClick"
             @background-click="clearSelection" />
-
+        <MapDisplayBar />
         <div class="sid-legend">
             <div class="legend-title">Chú thích</div>
             <div class="legend-row"><q-icon name="apartment" color="amber" size="15px" /><span>Trạm</span></div>
@@ -93,6 +93,7 @@
 import { ref, shallowRef, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GoogleMapView from '../components/gis/GoogleMapView.vue'
+import MapDisplayBar from '../components/gis/MapDisplayBar.vue'
 import gisAPI from '../services/gis'
 import { getRouteColor } from '../utils/routeColors'
 import { formatLength } from '../utils/geo'

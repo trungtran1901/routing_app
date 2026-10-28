@@ -11,9 +11,9 @@
 import { ref, shallowRef, onMounted, onBeforeUnmount, watch, markRaw } from 'vue'
 import { loadGoogleMaps } from '../../utils/googleMapsLoader'
 import { coordsToPath, bboxToBounds } from '../../utils/geo'
-import { buildPointIcon, normalizePointType, pointTypeMeta, shouldShowLabel } from '../../utils/pointTypes'
+import { buildPointIcon, normalizePointType, pointTypeMeta, shouldShowLabel, zoomScale } from '../../utils/pointTypes'
 import { getRouteColor, getRouteColorByParentId, ensureRouteColorByParentId, hasRouteColorCached } from '../../utils/routeColors'
-
+import { useMapDisplay } from '../../composables/useMapDisplay'
 const props = defineProps({
     points: { type: Map, required: true },
     clusters: { type: Array, default: () => [] },
@@ -57,7 +57,10 @@ const pinMarker = shallowRef(null)
 let editingPolyline = null
 let editListeners = []
 let idleListener = null
-
+const display = useMapDisplay()
+let trafficLayer = null
+let transitLayer = null
+let appliedScale = 0
 const pointParentIdByRoute = new Map()
 const segmentsByParentId = new Map()
 
@@ -87,8 +90,11 @@ onMounted(async () => {
         streetViewControl: false,
         fullscreenControl: false,
         gestureHandling: 'greedy',
-        clickableIcons: false
+        clickableIcons: false,
+        styles: display.mapStyles.value
     }))
+
+    appliedScale = currentIconScale()
 
     geocoder = markRaw(new googleMaps.Geocoder())
 
@@ -111,7 +117,10 @@ onMounted(async () => {
         emit('idle', { bounds: map.getBounds(), zoom: map.getZoom() })
     })
 
-    map.addListener('zoom_changed', () => applyLabelVisibility())
+    map.addListener('zoom_changed', () => {
+        applyLabelVisibility()
+        refreshIconScale()
+    })
 
     ready.value = true
     emit('ready', map)
@@ -125,6 +134,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+    trafficLayer?.setMap(null)
+    transitLayer?.setMap(null)
     clearAllOverlays()
     if (idleListener) googleMaps?.event.removeListener(idleListener)
 })
@@ -143,7 +154,43 @@ function clearAllOverlays() {
     stopEditingOverlay()
     clearMeasureOverlay()
 }
+function currentIconScale() {
+    const base = display.state.autoScale && map ? zoomScale(map.getZoom()) : 1
+    return Math.round(base * display.state.scaleMultiplier * 20) / 20
+}
 
+function refreshIconScale() {
+    if (!map || !googleMaps) return
+    const scale = currentIconScale()
+    if (scale === appliedScale) return
+    appliedScale = scale
+    pointMarkers.forEach(entry => {
+        entry.marker.setIcon(buildPointIcon(googleMaps, entry.pointType, scale))
+    })
+    clusterMarkers.forEach(marker => {
+        marker.setIcon(buildClusterIcon(marker.get('clusterCount'), scale))
+    })
+}
+
+function applyMapStyles() {
+    if (map) map.setOptions({ styles: display.mapStyles.value })
+}
+
+function applyLayers() {
+    if (!map) return
+    if (display.state.traffic) {
+        if (!trafficLayer) trafficLayer = new googleMaps.TrafficLayer()
+        trafficLayer.setMap(map)
+    } else if (trafficLayer) {
+        trafficLayer.setMap(null)
+    }
+    if (display.state.transit) {
+        if (!transitLayer) transitLayer = new googleMaps.TransitLayer()
+        transitLayer.setMap(map)
+    } else if (transitLayer) {
+        transitLayer.setMap(null)
+    }
+}
 function isPointTypeVisible(pointType) {
     const key = normalizePointType(pointType)
     return props.visiblePointTypes?.[key] !== false
@@ -202,7 +249,7 @@ function syncPoints(pointsMap) {
                 position,
                 map: visible ? map : null,
                 title: point.ten_diem || point.ma_diem,
-                icon: buildPointIcon(googleMaps, point.point_type),
+                icon: buildPointIcon(googleMaps, point.point_type, currentIconScale()),
                 draggable: props.pointsDraggable,
                 zIndex: 30
             })
@@ -221,7 +268,7 @@ function syncPoints(pointsMap) {
             pointMarkers.set(id, entry)
         } else {
             entry.marker.setPosition(position)
-            entry.marker.setIcon(buildPointIcon(googleMaps, point.point_type))
+            entry.marker.setIcon(buildPointIcon(googleMaps, point.point_type, currentIconScale()))
             entry.marker.setMap(visible ? map : null)
             entry.pointType = point.point_type
             entry.labelConfig = labelConfig
@@ -247,14 +294,15 @@ function clusterSize(count) {
     return 20
 }
 
-function buildClusterIcon(count) {
-    const size = clusterSize(count)
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1.5}" fill="#0a84ff" fill-opacity="0.28" stroke="#0a84ff" stroke-width="1.2"/>
-    <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 7}" fill="#0a84ff"/>
+function buildClusterIcon(count, scale = 1) {
+    const base = clusterSize(count)
+    const size = Math.max(12, Math.round(base * scale))
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${base}" height="${base}" viewBox="0 0 ${base} ${base}">
+    <circle cx="${base / 2}" cy="${base / 2}" r="${base / 2 - 1.5}" fill="#0a84ff" fill-opacity="0.28" stroke="#0a84ff" stroke-width="1.2"/>
+    <circle cx="${base / 2}" cy="${base / 2}" r="${base / 2 - 7}" fill="#0a84ff"/>
     <text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle"
       font-family="system-ui,sans-serif" font-weight="700"
-      font-size="${size >= 34 ? 12 : 10}" fill="#ffffff">${count}</text>
+      font-size="${base >= 34 ? 12 : 10}" fill="#ffffff">${count}</text>
   </svg>`
     return {
         url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
@@ -277,10 +325,11 @@ function syncClusters(list) {
             marker = new googleMaps.Marker({
                 position,
                 map,
-                icon: buildClusterIcon(cluster.count),
+                icon: buildClusterIcon(cluster.count, currentIconScale()),
                 zIndex: 40,
                 clickable: true
             })
+            marker.set('clusterCount', cluster.count)
             marker.addListener('click', () => {
                 emit('cluster-click', cluster)
                 if (cluster.bbox) {
@@ -683,7 +732,9 @@ watch(() => props.measureMode, val => {
     if (!val) clearMeasureOverlay()
     if (map) map.getDiv().style.cursor = val ? 'crosshair' : ''
 })
-
+watch(display.mapStyles, () => { if (ready.value) applyMapStyles() })
+watch(() => [display.state.traffic, display.state.transit], () => { if (ready.value) applyLayers() })
+watch(() => [display.state.autoScale, display.state.scaleMultiplier], () => { if (ready.value) refreshIconScale() })
 defineExpose({
     fitToSegment, fitToRoute, panToPoint, setMapType, fitToCurrentData,
     dropPin, clearPin, panAndPin, fitToMeasure

@@ -22,7 +22,7 @@
             @idle="onMapIdle" @point-click="onPointClick" @segment-click="onSegmentClick"
             @background-click="onBackgroundClick" @geometry-changed="onGeometryChanged" @point-dragend="onPointDragEnd"
             @pin-change="onPinChange" @measure-click="onMeasureClick" @measure-undo="gis.undoMeasurePoint" />
-
+        <MapDisplayBar />
         <!-- Nút bật/tắt toàn bộ khối chú thích -->
         <q-btn round unelevated size="sm" color="dark" text-color="grey-3" icon="layers" class="legend-toggle-fab"
             :class="{ 'legend-toggle-fab--active': legendsVisible }" @click="legendsVisible = !legendsVisible">
@@ -214,6 +214,7 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Notify } from 'quasar'
 import GoogleMapView from '../components/gis/GoogleMapView.vue'
+import MapDisplayBar from '../components/gis/MapDisplayBar.vue'
 import MapToolbar from '../components/gis/MapToolbar.vue'
 import MapSearchBar from '../components/gis/MapSearchBar.vue'
 import PlaceSearchBox from '../components/gis/PlaceSearchBox.vue'
