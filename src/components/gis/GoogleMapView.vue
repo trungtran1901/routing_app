@@ -11,7 +11,7 @@
 import { ref, shallowRef, onMounted, onBeforeUnmount, watch, markRaw } from 'vue'
 import { loadGoogleMaps } from '../../utils/googleMapsLoader'
 import { coordsToPath, bboxToBounds } from '../../utils/geo'
-import { buildPointIcon, normalizePointType, pointTypeMeta } from '../../utils/pointTypes'
+import { buildPointIcon, normalizePointType, pointTypeMeta, shouldShowLabel } from '../../utils/pointTypes'
 import { getRouteColor, getRouteColorByParentId, ensureRouteColorByParentId, hasRouteColorCached } from '../../utils/routeColors'
 
 const props = defineProps({
@@ -163,6 +163,7 @@ function wrapLabelText(text) {
 }
 
 function buildLabelConfig(point) {
+    if (!shouldShowLabel(point.point_type)) return null
     const text = point.ten_diem || point.ma_diem || ''
     if (!text) return null
     return {
@@ -178,7 +179,7 @@ function applyLabelVisibility() {
     if (!map) return
     const show = map.getZoom() >= LABEL_ZOOM_MIN
     pointMarkers.forEach(entry => {
-        entry.marker.setLabel(show ? entry.labelConfig : null)
+        entry.marker.setLabel(show && entry.labelConfig ? entry.labelConfig : null)
     })
 }
 
@@ -240,10 +241,10 @@ function clusterKey(c) {
 }
 
 function clusterSize(count) {
-    if (count >= 100) return 40
-    if (count >= 50) return 34
-    if (count >= 10) return 28
-    return 22
+    if (count >= 100) return 36
+    if (count >= 50) return 30
+    if (count >= 10) return 24
+    return 20
 }
 
 function buildClusterIcon(count) {
@@ -339,7 +340,7 @@ function segmentColor(segment, id) {
 }
 
 function segmentWeight(id) {
-    return id === props.selectedSegmentId ? 5 : 3
+    return id === props.selectedSegmentId ? 3 : 2
 }
 
 function syncSegments(segmentsMap) {

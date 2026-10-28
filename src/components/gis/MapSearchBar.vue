@@ -1,5 +1,5 @@
 <template>
-    <div class="gis-search">
+    <div class="gis-search" :style="{ zoom: uiScale }">
 
         <!-- Search box -->
         <div class="search-box" :class="{ 'is-loading': loading }">
@@ -85,6 +85,11 @@
 
 
 <script setup>
+import { useUiScale } from '../../composables/useUiScale'
+
+// Hệ số phóng to/thu nhỏ theo độ phân giải + scale của màn hình
+const { uiScale } = useUiScale()
+
 defineProps({
     modelValue: {
         type: String,

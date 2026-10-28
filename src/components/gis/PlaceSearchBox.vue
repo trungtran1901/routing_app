@@ -1,5 +1,5 @@
 <template>
-    <div class="place-search">
+    <div class="place-search" :style="{ zoom: uiScale }">
         <div class="place-search-box" :class="{ 'is-loading': loading }">
             <q-icon name="travel_explore" size="20px" class="place-search-icon" />
             <q-input v-model="query" dense borderless dark placeholder="Tìm địa điểm trên Google Maps..."
@@ -20,7 +20,7 @@
                         <div class="place-result-main">{{ p.placePrediction.structuredFormat?.mainText?.text ||
                             p.placePrediction.text.text }}</div>
                         <div class="place-result-sub">{{ p.placePrediction.structuredFormat?.secondaryText?.text || ''
-                        }}</div>
+                            }}</div>
                     </div>
                 </div>
             </div>
@@ -30,6 +30,10 @@
 
 <script setup>
 import { ref, onBeforeUnmount } from 'vue'
+import { useUiScale } from '../../composables/useUiScale'
+
+// Hệ số phóng to/thu nhỏ theo độ phân giải + scale của màn hình
+const { uiScale } = useUiScale()
 
 const props = defineProps({
     // apiKey: { type: String, required: true },

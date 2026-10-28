@@ -46,8 +46,8 @@ export function useGisMap() {
   const autoSaving = ref(false)
   const autoSaveError = ref('')
   let autoSaveTimer = null
-  // let saveInFlight = false
-  // let saveQueued = false
+  let saveInFlight = false
+  let saveQueued = false
 
   const pointsDraggable = ref(false)
   const savingPointId = ref(null)
@@ -173,7 +173,7 @@ export function useGisMap() {
       clusters.value = nextClusters
 
       const nextSegments = new Map()
-      for (const s of segmentsRes.data?.data || []) nextSegments.set(s.source_id, s)
+      for (const s of segmentsRes.data?.data || []) nextSegments.set(s.source_id, reconcileSegmentVersion(s))
       segments.value = nextSegments
     } catch (err) {
       if (signal.aborted) return
@@ -208,7 +208,9 @@ export function useGisMap() {
     loadingSegmentDetail.value = true
     try {
       const res = await gisAPI.getSegment(segmentId)
-      segmentDetail.value = res.data?.data || null
+      const detail = res.data?.data || null
+      if (detail?.segment) detail.segment = reconcileSegmentVersion(detail.segment)
+      segmentDetail.value = detail
     } catch (err) {
       segmentDetailError.value = err?.response?.data?.detail || 'Không tải được thông tin đoạn cáp'
     } finally {
@@ -266,7 +268,7 @@ export function useGisMap() {
       const pMap = new Map()
       for (const p of data.points || []) pMap.set(p.source_id, p)
       const sMap = new Map()
-      for (const s of data.segments || []) sMap.set(s.source_id, s)
+      for (const s of data.segments || []) sMap.set(s.source_id, reconcileSegmentVersion(s))
 
       routeModePoints.value = pMap
       routeModeSegments.value = sMap
@@ -327,6 +329,32 @@ export function useGisMap() {
     }
   }
 
+  function localKnownVersion(segmentId) {
+    const a = segments.value.get(segmentId)?.geometry_version
+    const b = routeModeSegments.value.get(segmentId)?.geometry_version
+    const c = segmentDetail.value?.segment?.source_id === segmentId
+      ? segmentDetail.value.segment.geometry_version
+      : undefined
+    return Math.max(a ?? -1, b ?? -1, c ?? -1)
+  }
+
+  function localKnownGeometry(segmentId) {
+    return segments.value.get(segmentId)?.geometry
+      || routeModeSegments.value.get(segmentId)?.geometry
+      || (segmentDetail.value?.segment?.source_id === segmentId ? segmentDetail.value.segment.geometry : undefined)
+  }
+
+  function reconcileSegmentVersion(segmentObj) {
+    if (!segmentObj) return segmentObj
+    const known = localKnownVersion(segmentObj.source_id)
+    const incoming = segmentObj.geometry_version ?? -1
+    if (known > incoming) {
+      const localGeom = localKnownGeometry(segmentObj.source_id)
+      return { ...segmentObj, geometry: localGeom || segmentObj.geometry, geometry_version: known }
+    }
+    return segmentObj
+  }
+
   function applySegmentGeometryUpdate(segmentId, geometry, geometryVersion) {
     if (segments.value.has(segmentId)) {
       const next = new Map(segments.value)
@@ -375,7 +403,22 @@ export function useGisMap() {
     }
   }
 
-  function startEdit(segmentId, geometry) {
+  async function startEdit(segmentId, fallbackGeometry) {
+    let geometry = fallbackGeometry
+
+    try {
+      const res = await gisAPI.getSegment(segmentId)
+      const detail = res.data?.data
+      if (detail) {
+        detail.segment = reconcileSegmentVersion(detail.segment)
+        segmentDetail.value = detail
+        applySegmentGeometryUpdate(detail.segment.source_id, detail.segment.geometry, detail.segment.geometry_version)
+        geometry = detail.segment.geometry
+      }
+    } catch {
+      // giữ nguyên fallbackGeometry nếu refetch lỗi
+    }
+
     editingSegmentId.value = segmentId
     originalGeometry.value = cloneGeometry(geometry)
     currentGeometry.value = cloneGeometry(geometry)
@@ -394,7 +437,14 @@ export function useGisMap() {
     if (!editingSegmentId.value || !currentGeometry.value) return
     if (!isValidLineString(currentGeometry.value)) return
 
+    if (saveInFlight) {
+      saveQueued = true
+      return
+    }
+
     const segmentId = editingSegmentId.value
+    const geometryToSave = currentGeometry.value
+    saveInFlight = true
     autoSaving.value = true
     autoSaveError.value = ''
 
@@ -404,7 +454,7 @@ export function useGisMap() {
 
     try {
       const res = await gisAPI.updateSegmentGeometry(segmentId, {
-        geometry: currentGeometry.value,
+        geometry: geometryToSave,
         geometry_source: 'USER',
         expected_version: expectedVersion
       })
@@ -412,10 +462,15 @@ export function useGisMap() {
       if (updated) {
         applySegmentGeometryUpdate(updated.source_id, updated.geometry, updated.geometry_version)
         if (segmentDetail.value?.segment?.source_id === updated.source_id) {
-          segmentDetail.value = { ...segmentDetail.value, segment: updated }
+          segmentDetail.value = {
+            ...segmentDetail.value,
+            segment: { ...segmentDetail.value.segment, ...updated }
+          }
         }
         originalGeometry.value = cloneGeometry(updated.geometry)
-        isDirty.value = false
+        if (currentGeometry.value === geometryToSave) {
+          isDirty.value = false
+        }
       }
     } catch (err) {
       if (err?.response?.status === 409) {
@@ -426,7 +481,12 @@ export function useGisMap() {
         autoSaveError.value = err?.response?.data?.detail || 'Không tự lưu được geometry.'
       }
     } finally {
+      saveInFlight = false
       autoSaving.value = false
+      if (saveQueued && !conflict.value) {
+        saveQueued = false
+        performAutoSave()
+      }
     }
   }
 
@@ -438,6 +498,7 @@ export function useGisMap() {
 
   function cancelEdit() {
     if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null }
+    saveQueued = false
     editingSegmentId.value = null
     originalGeometry.value = null
     currentGeometry.value = null
@@ -452,10 +513,14 @@ export function useGisMap() {
 
     if (isDirty.value && currentGeometry.value) {
       await performAutoSave()
+      while (saveInFlight) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
     }
 
     if (conflict.value) return false
 
+    saveQueued = false
     editingSegmentId.value = null
     originalGeometry.value = null
     currentGeometry.value = null

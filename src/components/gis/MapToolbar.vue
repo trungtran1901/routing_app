@@ -1,10 +1,10 @@
 <template>
-    <div class="gis-toolbar">
+    <div class="gis-toolbar" :style="{ zoom: uiScale }">
         <div class="toolbar-section map-type-section">
             <q-btn-toggle v-model="mapTypeLocal" unelevated no-caps class="ios-segmented" toggle-color="white" size="sm"
                 text-color="grey-5" toggle-text-color="dark" :options="[
                     { label: 'Bản đồ', value: 'roadmap' },
-                    { label: 'Vệ tinh', value: 'satellite' }
+                    { label: 'Vệ tinh', value: 'hybrid' }
                 ]" @update:model-value="$emit('update:mapType', $event)" />
         </div>
 
@@ -90,6 +90,10 @@
 
 <script setup>
 import { ref, watch } from 'vue'
+import { useUiScale } from '../../composables/useUiScale'
+
+// Hệ số phóng to/thu nhỏ theo độ phân giải + scale của màn hình
+const { uiScale } = useUiScale()
 
 const props = defineProps({
     mapType: {
